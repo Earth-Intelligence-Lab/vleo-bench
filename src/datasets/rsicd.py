@@ -19,7 +19,7 @@ class RSICDDataset(VLEODataset):
 
     CAPTION_KEY = "images"
 
-    def __init__(self, data_dir: str = "./data") -> Dataset:
+    def __init__(self, data_dir: str = "./data"):
         self.data_dir = os.path.join(data_dir, self.dir_name)
         self.caption_path = os.path.join(self.data_dir, self.caption_fname)
         with open(self.caption_path) as f:
