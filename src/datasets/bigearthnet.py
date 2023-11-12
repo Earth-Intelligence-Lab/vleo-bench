@@ -1,5 +1,19 @@
+import json
 import os
 from glob import glob
+from typing import Union, Dict
+
+import numpy as np
+import rasterio
+import torch
+from PIL import Image as PILImage
+from datasets import Dataset
+from numpy._typing import NDArray
+from rasterio.enums import Resampling
+from skimage import img_as_ubyte
+from skimage.exposure import rescale_intensity
+from torch import Tensor
+from tqdm import tqdm
 
 
 def sort_sentinel2_bands(x: str) -> str:
@@ -235,3 +249,93 @@ class BigEarthNetDataset:
             paths = sorted(paths, key=sort_sentinel2_bands)
 
         return paths
+
+    def _load_meta(self, index: int) -> Dict:
+        if "s2" in self.bands:
+            folder = self.folders[index]["s2"]
+        else:
+            folder = self.folders[index]["s1"]
+
+        path = glob(os.path.join(folder, "*.json"))[0]
+        with open(path) as f:
+            meta_data = json.load(f)
+
+        return meta_data
+
+    def _load_target(self, index: int) -> Tensor:
+        """Load the target mask for a single image.
+
+        Args:
+            index: index to return
+
+        Returns:
+            the target label
+        """
+        labels = self._load_meta(index)["labels"]
+
+        # labels -> indices
+        indices = [self.class2idx[label] for label in labels]
+
+        # Map 43 to 19 class labels
+        if self.num_classes == 19:
+            indices_optional = [self.label_converter.get(idx) for idx in indices]
+            indices = [idx for idx in indices_optional if idx is not None]
+
+        target = torch.zeros(self.num_classes, dtype=torch.long)
+        target[indices] = 1
+        return target
+
+    def _load_image(self, index: int) -> Union[NDArray, Tensor]:
+        """Load a single image.
+
+        Args:
+            index: index to return
+
+        Returns:
+            the raster image or target
+        """
+        paths = self._load_paths(index)
+        images = []
+        for path in paths:
+            # Bands are of different spatial resolutions
+            # Resample to (120, 120)
+            with rasterio.open(path) as dataset:
+                array = dataset.read(
+                    indexes=1,
+                    out_shape=self.image_size,
+                    out_dtype="int32",
+                    resampling=Resampling.bilinear,
+                )
+                images.append(array)
+        arrays: "NDArray[np.int_]" = np.stack(images, axis=0)
+        # tensor = torch.from_numpy(arrays).float()
+        return arrays
+
+    def __len__(self) -> int:
+        """Return the number of data points in the dataset.
+
+        Returns:
+            length of the dataset
+        """
+        return len(self.folders)
+
+    def _hf_item_generator(self):
+        for i in tqdm(range(len(self))):
+            img = img_as_ubyte(rescale_intensity(self._load_image(i))).transpose(1, 2, 0)
+            img = PILImage.fromarray(img)
+            yield {
+                "img": img,
+                **self._load_meta(i)
+            }
+
+    def construct_hf_dataset(self) -> Dataset:
+        return Dataset.from_generator(self._hf_item_generator)
+
+
+def main():
+    dataset = BigEarthNetDataset(root=".", num_classes=19)
+    dataset.construct_hf_dataset().save_to_disk("./parquet")
+
+
+if __name__ == "__main__":
+    main()
