@@ -3,13 +3,15 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from datasets import Dataset, Image
 
+from src.datasets.dataset import VLEODataset
+
 
 def get_file_list(root, file_type):
     return [os.path.join(directory_path, f) for directory_path, directory_name, files in os.walk(root) for f in files if
             f.endswith(file_type)]
 
 
-class DIORRSVGDataset:
+class DIORRSVGDataset(VLEODataset):
     folder_name = "DIOR-RSVG"
     jpeg_directory = os.path.join(folder_name, "JPEGImages")
     annotation_directory = os.path.join(folder_name, "Annotations")
@@ -21,6 +23,11 @@ class DIORRSVGDataset:
         'harbor': 'Harbor', 'windmill': 'Windmill', 'ship': 'Ship', 'chimney': 'Chimney', 'airport': 'Airport',
         'Expressway-toll-station': 'Expressway Toll Station', 'trainstation': 'Train Station', 'vehicle': 'Vehicle'
     }
+
+    system_message = ("You are a helpful image analyst that specializes in localizing objects from satellite "
+                      "and aerial images given a natural language instruction. "
+                      "You always truthfully answer the user's question. If you are not sure about "
+                      "something, don't answer false information.")
 
     def __init__(self, root: str = "./data", split: str = "test"):
         assert split in ["train", "test", "val"]
@@ -76,6 +83,14 @@ class DIORRSVGDataset:
 
     def construct_hf_dataset(self) -> Dataset:
         return Dataset.from_list(self._get_images())
+
+    @staticmethod
+    def get_segmentation_prompt(h: int, w: int, description: str):
+        prompt = (f"You are given an {h} x {w} satellite image. Identify the extent of the object in the description "
+                  "below in the format of [xmin, ymin, xmax, ymax], where the top-left coordinate is (x_min, "
+                  "y_min) and the bottom-right coordinate is (x_max, y_max). You should answer the extent without "
+                  f"further explanation.\nDescription: {description}")
+        return prompt
 
 
 def main():
