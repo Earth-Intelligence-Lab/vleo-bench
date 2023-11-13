@@ -33,7 +33,7 @@ class VLEODataset(ABC):
         pass
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
-    def query_openai(self, base64_image: str, system: str, user: str):
+    def query_openai(self, base64_image: str, system: str, user: str, t: float = 0.2, max_tokens: int = 300):
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
@@ -69,8 +69,8 @@ class VLEODataset(ABC):
                     ]
                 }
             ],
-            "max_tokens": 300,
-            "temperature": 0.2
+            "max_tokens": max_tokens,
+            "temperature": t
         }
 
         response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
