@@ -41,7 +41,7 @@ class FireRisk:
 
 def main():
     for split in ["train", "val"]:
-        dataset = FireRisk()
+        dataset = FireRisk(split=split)
         hf_dataset = dataset.construct_hf_dataset()
         print(hf_dataset)
 
