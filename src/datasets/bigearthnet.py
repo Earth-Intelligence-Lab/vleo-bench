@@ -34,8 +34,7 @@ class BigEarthNetDataset:
             "Permanent crops",
             "Pastures",
             "Complex cultivation patterns",
-            "Land principally occupied by agriculture, with significant areas of"
-            " natural vegetation",
+            "Land principally occupied by agriculture, with significant areas of natural vegetation",
             "Agro-forestry areas",
             "Broad-leaved forest",
             "Coniferous forest",
@@ -70,8 +69,7 @@ class BigEarthNetDataset:
             "Pastures",
             "Annual crops associated with permanent crops",
             "Complex cultivation patterns",
-            "Land principally occupied by agriculture, with significant areas of"
-            " natural vegetation",
+            "Land principally occupied by agriculture, with significant areas of natural vegetation",
             "Agro-forestry areas",
             "Broad-leaved forest",
             "Coniferous forest",
@@ -168,6 +166,10 @@ class BigEarthNetDataset:
             "filename": "BigEarthNet-S2-v1.0.tar.gz",
             "directory": "BigEarthNet-v1.0",
         },
+    }
+    cloud_snow_metadata = {
+        "s2": ["patches_with_seasonal_snow.csv", "patches_with_cloud_and_shadow.csv"],
+        "s2-rgb": ["patches_with_seasonal_snow.csv", "patches_with_cloud_and_shadow.csv"]
     }
     image_size = (120, 120)
 
