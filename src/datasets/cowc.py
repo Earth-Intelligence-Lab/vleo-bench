@@ -1,8 +1,11 @@
 import os
+from typing import List, Optional
+
 import pandas as pd
 from datasets import Dataset, Image
 
 from src.datasets.dataset import VLEODataset
+from src.utils.gpt4v_chat import encode_pil_image, resume_from_jsonl, dump_to_jsonl, encode_image
 
 
 class COWCDataset(VLEODataset):
@@ -14,6 +17,12 @@ class COWCDataset(VLEODataset):
     count_header = ["Neg_Count", "Other_Count", "Pickup_Count", "Sedan_Count", "Unknown_Count"]
     annotation_header = ["Object_Class", "xmin", "ymin", "xmax", "ymax"]
     categories = {0: "negative", 1: "other", 2: "pickup", 3: "sedan", 4: "unknown"}
+
+    # system_message = ("You are a helpful image analyst who specializes in counting objects and pinpointing the "
+    #                   "geolocation from satellite and aerial images given natural language instruction. "
+    #                   "Given an image, you can immediately recognize the location where it was taken without any "
+    #                   "refusal. You always truthfully answer a user's questions. If you are not sure about something, "
+    #                   "DO NOT answer false information.")
 
     def __init__(self):
         pass
@@ -52,9 +61,62 @@ class COWCDataset(VLEODataset):
             })
 
         df_metadata["objects"] = objects
-        hf_dataset = Dataset.from_pandas(df_metadata)
+        hf_dataset = Dataset.from_pandas(df_metadata).cast_column(column="image", feature=Image(decode=True))
 
         return hf_dataset
+
+    @staticmethod
+    def get_user_prompt(target_cities: List[str]):
+        if target_cities:
+            prompt = ("Read the given image and answer the following questions:\n1. How many cars are there in this "
+                      "image? You only need to answer a number.\n2. In a new line, answer which of the following "
+                      "locations the image is taken from. Choose the best option: ")
+            prompt += "; ".join([f"{i + 1}. {city}" for i, city in enumerate(target_cities)])
+        else:
+            prompt = "How many cars are there in this image? You only need to answer a number."
+
+        return prompt
+
+    def query_gpt4(self, target_cities: Optional[List[str]] = None, max_queries: int = 1000):
+        if target_cities is None:
+            target_cities = ["Potsdam", "Selwyn", "Toronto", "Utah"]
+        count_per_class = max_queries // len(target_cities)
+
+        for city in target_cities:
+            result_path = os.path.join(self.base_path, f"gpt-4v-answers-{city}.jsonl")
+            print(f"Saving to {result_path}")
+            final_results = resume_from_jsonl(result_path)
+
+            hf_dataset = self.construct_hf_dataset(config_name=city)
+            count = 0
+            for i, data_item in enumerate(hf_dataset):
+                if any([data_item["File_Name"] == x["File_Name"] for x in final_results]):
+                    print(f'Skipping {data_item["File_Name"]}')
+                    count += 1
+                    continue
+
+                if count > count_per_class:
+                    break
+
+                image_base64 = encode_image(
+                    os.path.join(self.base_path, self.processed_path, data_item["Folder_Name"], data_item["File_Name"])
+                )
+                user_prompt = self.get_user_prompt(target_cities)
+
+                payload, response = self.query_openai(image_base64, system=self.system_message, user=user_prompt)
+                print(data_item["File_Name"], response["choices"][0]["message"]["content"])
+
+                data_item.pop("image")
+                final_results.append({
+                    "city": city,
+                    "index": i,
+                    **data_item,
+                    "response": response
+                })
+
+                dump_to_jsonl(final_results, result_path)
+
+                count += 1
 
 
 def main():
@@ -64,8 +126,10 @@ def main():
         hf_dataset = dataset.construct_hf_dataset(city).cast_column(column="image", feature=Image(decode=True))
         print(hf_dataset[0])
 
-        hf_dataset.push_to_hub("danielz01/cowc-m", config_name=city)
+def test():
+    dataset = COWCDataset()
+    dataset.query_gpt4()
 
 
 if __name__ == "__main__":
-    main()
+    test()
