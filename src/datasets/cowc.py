@@ -57,7 +57,8 @@ class COWCDataset(VLEODataset):
             df_objects = pd.read_csv(annotation_file, delimiter=" ", names=self.annotation_header)
             objects.append({
                 "bbox": df_objects[self.annotation_header[1:]].to_numpy().tolist(),
-                "categories": df_objects[self.annotation_header[0]].astype(int).replace(self.categories).to_numpy().tolist()
+                "categories": df_objects[self.annotation_header[0]].astype(int).replace(
+                    self.categories).to_numpy().tolist()
             })
 
         df_metadata["objects"] = objects
@@ -66,7 +67,7 @@ class COWCDataset(VLEODataset):
         return hf_dataset
 
     @staticmethod
-    def get_user_prompt(target_cities: List[str]):
+    def get_user_prompt(target_cities: Optional[List[str]]):
         if target_cities:
             prompt = ("Read the given image and answer the following questions:\n1. How many cars are there in this "
                       "image? You only need to answer a number.\n2. In a new line, answer which of the following "
@@ -101,7 +102,7 @@ class COWCDataset(VLEODataset):
                 image_base64 = encode_image(
                     os.path.join(self.base_path, self.processed_path, data_item["Folder_Name"], data_item["File_Name"])
                 )
-                user_prompt = self.get_user_prompt(target_cities)
+                user_prompt = self.get_user_prompt(None)
 
                 payload, response = self.query_openai(image_base64, system=self.system_message, user=user_prompt)
                 print(data_item["File_Name"], response["choices"][0]["message"]["content"])
@@ -125,6 +126,7 @@ def main():
     for city in ["Columbus", "Potsdam", "Selwyn", "Toronto", "Utah", "Vaihingen"]:
         hf_dataset = dataset.construct_hf_dataset(city).cast_column(column="image", feature=Image(decode=True))
         print(hf_dataset[0])
+
 
 def test():
     dataset = COWCDataset()
