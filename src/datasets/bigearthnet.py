@@ -4,16 +4,20 @@ from glob import glob
 from typing import Union, Dict
 
 import numpy as np
+import pandas as pd
 import rasterio
 import torch
 from PIL import Image as PILImage
-from datasets import Dataset
+from datasets import Dataset, load_dataset
 from numpy._typing import NDArray
 from rasterio.enums import Resampling
 from skimage import img_as_ubyte
 from skimage.exposure import rescale_intensity
 from torch import Tensor
 from tqdm import tqdm
+
+from src.datasets.dataset import VLEODataset
+from src.utils.gpt4v_chat import resume_from_jsonl, dump_to_jsonl, encode_pil_image
 
 
 def sort_sentinel2_bands(x: str) -> str:
@@ -25,7 +29,7 @@ def sort_sentinel2_bands(x: str) -> str:
     return x
 
 
-class BigEarthNetDataset:
+class BigEarthNetDataset(VLEODataset):
     class_sets = {
         19: [
             "Urban fabric",
@@ -330,13 +334,46 @@ class BigEarthNetDataset:
                 **self._load_meta(i)
             }
 
-    def construct_hf_dataset(self) -> Dataset:
+    def construct_hf_dataset(self, ) -> Dataset:
         return Dataset.from_generator(self._hf_item_generator)
+
+    def get_user_prompt(self):
+        prompt = ("You are given a satellite image and a list of land usage types. Choose all the land use types "
+                  "shown up in the image. A list of possible land use types:\n")
+        prompt += ";\n".join([f"{i + 1}. {option}" for i, option in enumerate(self.class_sets[19])])
+        prompt += ("\nOutput the indices of all applicable land use types in a Python list, without any comment or "
+                   "further explanation.")
+
+        return prompt
+
+    def query_gpt4(self, result_path: str, max_queries: int = 1000):
+        hf_dataset = load_dataset("danielz01/BigEarthNet-S2-v1.0", split="test")
+
+        np.random.seed(0)
+        selected_indices = np.random.choice(range(len(hf_dataset)), size=max_queries, replace=False).astype(int).tolist()
+        final_results = resume_from_jsonl(result_path)
+        for idx in selected_indices:
+            data_item = hf_dataset[int(idx)]
+            if any([idx == x["index"] for x in final_results]):
+                print(f'Skipping {data_item}')
+                continue
+
+            image_base64 = encode_pil_image(data_item["img"])
+            payload, response = self.query_openai(image_base64, system=self.system_message, user=self.get_user_prompt())
+            print(idx, response)
+            data_item.pop("img")
+            final_results.append({
+                "index": idx,
+                **data_item,
+                "response": response
+            })
+
+            dump_to_jsonl(final_results, result_path)
 
 
 def main():
     dataset = BigEarthNetDataset(root=".", num_classes=19)
-    dataset.construct_hf_dataset().save_to_disk("./parquet")
+    print(dataset.get_user_prompt())
 
 
 if __name__ == "__main__":
