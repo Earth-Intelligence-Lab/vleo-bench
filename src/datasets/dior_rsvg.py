@@ -113,7 +113,12 @@ class DIORRSVGDataset(VLEODataset):
             },
             {
                 "role": "assistant",
-                "text": "[100, 342, 164, 439]"
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "[100, 342, 164, 439]"
+                    }
+                ]
             },
             {
                 "role": "user",
@@ -133,7 +138,12 @@ class DIORRSVGDataset(VLEODataset):
             },
             {
                 "role": "assistant",
-                "text": "[172, 368, 434, 577]"
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "[172, 368, 434, 577]"
+                    }
+                ]
             }
         ]
 
