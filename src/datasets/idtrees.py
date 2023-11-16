@@ -1,13 +1,16 @@
-import geopandas
-import pandas as pd
+from typing import Optional, Callable
 
+import geopandas
+import numpy as np
+import pandas as pd
+from datasets import Dataset, ClassLabel, Image
+from torch import Tensor
+from PIL import Image as PILImage
+from torchgeo.datasets import IDTReeS
 from src.datasets.dataset import VLEODataset
 
 
-class IDTreesDataset(VLEODataset):
-    train_url = "https://zenodo.org/records/3934932/files/IDTREES_competition_train_v2.zip?download=1"
-    test_url = "https://zenodo.org/records/3934932/files/IDTREES_competition_test_v2.zip?download=1"
-
+class IDTreesDataset(VLEODataset, IDTReeS):
     train_labels = "./data/IDTReeS/train/Field/train_data.csv"
     train_shps = [
         "./data/IDTReeS/train/ITC/train_MLBS.shp",
@@ -16,10 +19,7 @@ class IDTreesDataset(VLEODataset):
     crown2rs = "./data/IDTReeS/train/Field/itc_rsFile.csv"
     join_key = "indvdID"
 
-    def __init__(self):
-        pass
-
-    def preprocess(self):
+    def join_shapefiles(self):
         train_labels = pd.read_csv(self.train_labels)
         train_rs_files = pd.read_csv(self.crown2rs)
         train_labels = pd.merge(
@@ -34,7 +34,50 @@ class IDTreesDataset(VLEODataset):
         )
         train_shps_meta.to_file(self.train_labels.replace(".csv", ".gpkg"), driver="GPKG")
 
+    def _hf_item_generator(self):
+        for idx in range(len(self)):
+            try:
+                data_item = self[idx]
+            except IndexError or TypeError as e:
+                print(e)
+                continue
+
+            img = data_item["image"].numpy().astype(np.uint8).transpose(1, 2, 0)
+            image = PILImage.fromarray(img)
+            labels = data_item.get("label", [-1])
+            bbox = data_item.get("boxes", [[]]),
+
+            data_item.pop("las")
+            data_item.pop("chm")
+            data_item.pop("hsi")
+            data_item.pop("image")
+            data_item.pop("label", [])
+
+            objects = {
+                "bbox": bbox,
+                "categories": labels
+            }
+            yield {
+                "image": image,
+                "objects": objects,
+                "taxonomy_id": [self.idx2class[i.item()] if i != -1 else "" for i in labels],
+                "scientific_name": [self.classes[self.idx2class[i.item()]] if i != -1 else "" for i in labels],
+                **data_item
+            }
+
+    def construct_hf_dataset(self) -> Dataset:
+        return Dataset.from_generator(self._hf_item_generator)
+
+    def query_gpt4(self):
+        hf_dataset = self.construct_hf_dataset()
+
+
+def main():
+    dataset = IDTreesDataset(root="/home/danielz/PycharmProjects/vleo-bench/data/IDTReeS/", split="train")
+    hf_dataset = dataset.construct_hf_dataset()
+    print(hf_dataset)
+    hf_dataset.push_to_hub("danielz01/IDTreeS", split="train")
+
 
 if __name__ == "__main__":
-    dataset = IDTreesDataset()
-    dataset.preprocess()
+    main()
