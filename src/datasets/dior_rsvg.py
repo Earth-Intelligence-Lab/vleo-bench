@@ -137,6 +137,8 @@ class DIORRSVGDataset(VLEODataset):
             }
         ]
 
+        return demonstrations
+
     def query_gpt4(self, result_path: str, max_queries: int = 100, few_shot=False):
         hf_dataset = self.construct_hf_dataset()
 
@@ -145,7 +147,7 @@ class DIORRSVGDataset(VLEODataset):
         final_results = resume_from_jsonl(result_path)
         for idx in selected_indices:
             data_item = hf_dataset[int(idx)]
-            if any([data_item["path"] == x["path"] for x in final_results]):
+            if any([idx == x["index"] for x in final_results]):
                 print(f'Skipping {idx}')
                 continue
 
@@ -175,7 +177,7 @@ class DIORRSVGDataset(VLEODataset):
 
 def main():
     dataset = DIORRSVGDataset(split="test")
-    dataset.query_gpt4("/home/danielz/PycharmProjects/vleo-bench/data/DIOR-RSVG/gpt-4v-segmentation-twoshot.jsonl", max_queries=100)
+    dataset.query_gpt4("/home/danielz/PycharmProjects/vleo-bench/data/DIOR-RSVG/gpt-4v-segmentation-twoshot.jsonl", max_queries=100, few_shot=True)
 
 
 if __name__ == "__main__":
