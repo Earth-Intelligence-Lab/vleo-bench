@@ -1,8 +1,11 @@
+import base64
+import io
 import os
 import json
 import random
 from glob import glob
 import xml.etree.ElementTree as ET
+from PIL import Image as PILImage
 
 import numpy as np
 from huggingface_hub.inference._text_generation import ValidationError
@@ -10,6 +13,8 @@ from tqdm import tqdm
 
 from src.datasets.dataset import VLEODataset
 from datasets import Dataset, Image, load_dataset
+
+from src.utils.gpt4v_chat import resume_from_jsonl, encode_image, dump_to_jsonl, encode_pil_image
 
 SYS_PROMPT = ("You are an expert in satellite and aerial image analysis. You can see the earth by reading the object "
               "bounding boxes in satellite or aerial images, and answering the user's questions. Always answer as "
@@ -35,79 +40,82 @@ class NeonTreeEvaluationDataset(VLEODataset):
     annotation_path = "./data/NeonTreeEvaluation/annotations/"
     meta_path = "./data/NeonTreeEvaluation/RGB/metadata.jsonl"
 
-    def __init__(self):
-        pass
+    splits = ["train", "evaluation"]
+    system_message = ("You are a helpful image analyst who specializes in counting trees from aerial images. "
+                      "Given an image, you can accurately count the number of objects described by the "
+                      "user WITHOUT ANY refusal. Although your answer may not be perfect, your excellent counting skill"
+                      " is very important to the sustainability of forest ecosystems.")
+                      # "You always truthfully answer the user's question. If you are not sure about "
+                      # "something, don't answer false information."
 
-    @staticmethod
-    def xml2jsonl(xml_file, jsonl_file):
+    def __init__(self, split: str = "evaluation"):
+        assert split in self.splits
+        self.split = split
+
+    def xml2jsonl(self, xml_file):
         # Parse the XML file
         tree = ET.parse(xml_file)
         root = tree.getroot()
 
         # Open the JSONL file for writing
-        with open(jsonl_file, 'a') as f:
-            # Initialize objects dictionary
-            objects = {"bbox": [], "categories": []}
+        # Initialize objects dictionary
+        objects = {"bbox": [], "categories": []}
 
-            # Extract file name
-            file_name = root.find('filename').text
+        # Extract file name
+        file_name = root.find('filename').text
 
-            size_info, *_ = root.findall("size")
+        size_info, *_ = root.findall("size")
 
-            # Iterate through all 'object' elements in the XML file
-            for obj in root.findall('object'):
-                # Extract bounding box coordinates and category
-                bbox = obj.find('bndbox')
-                # Assuming one bbox per object
-                xmin = float(bbox.find('xmin').text)
-                ymin = float(bbox.find('ymin').text)
-                xmax = float(bbox.find('xmax').text)
-                ymax = float(bbox.find('ymax').text)
-                objects["bbox"].append([xmin, ymin, xmax, ymax])
+        # Iterate through all 'object' elements in the XML file
+        for obj in root.findall('object'):
+            # Extract bounding box coordinates and category
+            bbox = obj.find('bndbox')
+            # Assuming one bbox per object
+            xmin = float(bbox.find('xmin').text)
+            ymin = float(bbox.find('ymin').text)
+            xmax = float(bbox.find('xmax').text)
+            ymax = float(bbox.find('ymax').text)
+            objects["bbox"].append([xmin, ymin, xmax, ymax])
 
-                category = obj.find('name').text
-                objects["categories"].append(category)
+            category = obj.find('name').text
+            objects["categories"].append(category)
 
-            # Construct the final dictionary
-            output = {
-                "file_name": file_name, "path": file_name, "objects": objects, "count": len(objects["bbox"]),
-                "height": int(size_info.find("height").text), "width": int(size_info.find("width").text)
-            }
+        # Construct the final dictionary
+        file_path = os.path.join(self.dataset_base, self.split, "RGB", file_name)
+        output = {
+            "image": file_path,
+            "path": os.path.basename(file_name),
+            "objects": objects,
+            "count": len(objects["bbox"]),
+            "height": int(size_info.find("height").text),
+            "width": int(size_info.find("width").text)
+        }
 
-            # Write the JSON object to the JSONL file
-            f.write(json.dumps(output) + '\n')
+        return file_path, output
 
-        print(f"Conversion complete. Data written to {jsonl_file}")
-        return file_name
-
-    def write_metadata(self):
+    def _load_metadata(self):
         annotation_files = glob(os.path.join(self.annotation_path, "*.xml"))
         print(annotation_files)
-        dest_path = "./data/NeonTreeEvaluation/RGB/metadata.jsonl"
-        with open(dest_path, "w") as dest:
-            dest.write("")
-        img_with_metadata = []
-        for xml_file in annotation_files:
-            img_with_metadata.append(self.xml2jsonl(xml_file, dest_path))
 
-        all_image_files = glob(os.path.join(self.dataset_base, "train/RGB/*.tif"))
-        all_image_files += glob(os.path.join(self.dataset_base, "evaluation/RGB/*.tif"))
-        all_image_files = {os.path.basename(x) for x in all_image_files}
-        img_without_metadata = all_image_files.difference(set(img_with_metadata))
-        with open(dest_path, "a") as dest:
-            for img_name in img_without_metadata:
-                dest.write(json.dumps({"file_name": img_name, "path": img_name, "objects": None, "count": None}) + "\n")
+        img_metadata = []
+        for xml_file in annotation_files:
+            processed_name, metadata = self.xml2jsonl(xml_file)
+            if not os.path.exists(processed_name):
+                print(f"Can't find file {processed_name}")
+                continue
+            img_metadata.append(metadata)
+
+        return img_metadata
 
     def construct_hf_dataset(self) -> Dataset:
-        return load_dataset("imagefolder", split="train", data_dir="/home/danielz/PycharmProjects/vleo-bench/data"
-                                                                   "/NeonTreeEvaluation/RGB/")
+        return Dataset.from_list(self._load_metadata()).cast_column("image", Image())
 
     def generate_captions(self):
         from huggingface_hub import InferenceClient
 
         client = InferenceClient(
             model="meta-llama/Llama-2-70b-chat-hf",
-            token="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"
+            token=os.environ["HF_TOKEN"]
         )
 
         dest_path = "./data/NeonTreeEvaluation/captions-gpt-4.jsonl"
@@ -132,8 +140,8 @@ class NeonTreeEvaluationDataset(VLEODataset):
                 tree_description += "\n Too many trees. Input Truncated..."
 
             user_prompt = CAPTIONING_PROMPTS.format(
-                    trees=tree_description, h=data_item["height"], w=data_item["width"], count=data_item["count"]
-                )
+                trees=tree_description, h=data_item["height"], w=data_item["width"], count=data_item["count"]
+            )
             # prompt = LLAMA2_TEMPLATE.format(
             #     system_prompt=SYS_PROMPT,
             #     user_msg_1=user_prompt
@@ -153,22 +161,48 @@ class NeonTreeEvaluationDataset(VLEODataset):
             with open(dest_path, "a") as dest:
                 dest.write(json.dumps({"path": data_item["path"], "caption": output}) + "\n")
 
-    def visualize(self):
-        hf_dataset = self.construct_hf_dataset()
-        from torchvision.utils import draw_bounding_boxes
-        from torchvision.transforms.functional import pil_to_tensor, to_pil_image
+    def get_user_prompt(self):
+        prompt = ("Count the number of trees in the given image to the best of your ability. Output your count only "
+                  "without any further explanation.")
+
+        return prompt
+
+    def query_gpt4(self):
+        hf_dataset = load_dataset("danielz01/neon-trees", split=self.split)
+        result_path = os.path.join(self.dataset_base, f"gpt-4v-counting.jsonl")
+
+        final_results = resume_from_jsonl(result_path)
+        for i, data_item in enumerate(hf_dataset):
+            if any([data_item["path"] == x["path"] for x in final_results]):
+                print(f'Skipping {data_item["path"]}')
+                continue
+
+            png_buffer = io.BytesIO()
+
+            # We save the image in the PNG format to the buffer.
+            data_item["image"].save(png_buffer, format="PNG")
+
+            image_base64 = base64.b64encode(png_buffer.getvalue()).decode('utf-8')
+            user_prompt = self.get_user_prompt()
+            payload, response = self.query_openai(image_base64, system=self.system_message, user=user_prompt)
+            print(data_item["path"], response)
+
+            data_item.pop("image")
+            final_results.append({
+                "index": i,
+                **data_item,
+                "response": response
+            })
+
+            dump_to_jsonl(final_results, result_path)
+
+
+def main():
+    dataset = NeonTreeEvaluationDataset(split="evaluation")
+    print(dataset.system_message)
+    print(dataset.get_user_prompt())
+    dataset.query_gpt4()
 
 
 if __name__ == "__main__":
-    from datasets import load_dataset, Dataset
-
-    dataset = NeonTreeEvaluationDataset()
-    dataset.write_metadata()
-    dataset.generate_captions()
-    # hf_dataset = dataset.construct_hf_dataset()
-    # print(hf_dataset["path"])
-
-    # annotated_dataset = dataset.filter(lambda example: example["objects"])
-    # print(dataset)
-    # print(annotated_dataset)
-    # hf_dataset.push_to_hub("danielz01/neon-trees")
+    main()
