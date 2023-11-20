@@ -17,7 +17,7 @@ def get_int_coords(x):
 
 class XView2CompetitionDataset(XView2, VLEODataset):
     def __init__(self, root: str = "data", split: str = "train"):
-        super(XView2).__init__(root, split)
+        super().__init__(root, split)
 
     def _load_files(self, root: str, split: str) -> List[Dict[str, str]]:
         """Return the paths of the files in the dataset.
@@ -47,14 +47,14 @@ class XView2CompetitionDataset(XView2, VLEODataset):
             with open(os.path.join(meta_root, f"{name}_post_disaster.json")) as f2:
                 meta2 = json.load(f2)
             objects1 = {
-                "bbox": [get_int_coords(loads_wkt(x).bounds) for x in meta1["features"]["xy"]],
+                "bbox": [get_int_coords(loads_wkt(x["wkt"]).bounds) for x in meta1["features"]["xy"]],
                 **{
                     property_name: [x["properties"][property_name] for x in meta1["features"]["xy"]] for property_name
                     in ["feature_type", "uid"]
                 }
             }
             objects2 = {
-                "bbox": [get_int_coords(loads_wkt(x).bounds) for x in meta2["features"]["xy"]],
+                "bbox": [get_int_coords(loads_wkt(x["wkt"]).bounds) for x in meta2["features"]["xy"]],
                 **{
                     property_name: [x["properties"][property_name] for x in meta2["features"]["xy"]] for property_name
                     in ["feature_type", "subtype", "uid"]
@@ -83,4 +83,8 @@ def main():
         dataset = XView2CompetitionDataset("datasets/xView2/", split=split)
         hf_dataset = dataset.construct_hf_dataset()
         print(hf_dataset)
-        hf_dataset.push_to_hub("danielz01/xView1", "competition")
+        hf_dataset.push_to_hub("danielz01/xView2", "competition", split=split)
+
+
+if __name__ == "__main__":
+    main()
