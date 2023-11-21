@@ -3,8 +3,10 @@ from glob import glob
 
 from datasets import Dataset, Image
 
+from src.datasets.dataset import VLEODataset
 
-class PatternNetDataset:
+
+class PatternNetDataset(VLEODataset):
     """PatternNet dataset.
 
         The `PatternNet <https://sites.google.com/view/zhouwx/dataset>`__
@@ -71,7 +73,7 @@ class PatternNetDataset:
     filename = "PatternNet.zip"
     directory = os.path.join("PatternNet", "images")
 
-    def __init__(self, root: str = "data", download: bool = False, checksum: bool = False) -> None:
+    def __init__(self, credential_path: str, root: str = "data", download: bool = False, checksum: bool = False) -> None:
         """Initialize a new PatternNet dataset instance.
 
         Args:
@@ -79,6 +81,7 @@ class PatternNetDataset:
             download: if True, download dataset and store it in the root directory
             checksum: if True, check the MD5 of the downloaded files (may be slow)
         """
+        super().__init__(credential_path)
         self.root = root
         self.download = download
         self.checksum = checksum
@@ -101,9 +104,17 @@ class PatternNetDataset:
 
         return Dataset.from_dict(hf_dict)
 
+    def get_user_prompt(self):
+        prompt = ("You are given a satellite image and a list of land usage types or object names. Choose one option "
+                  "that best describes the image. A list of possible land use types:\n")
+        prompt += ";\n".join([f"{i + 1}. {option}" for i, option in enumerate(self.categories_normalized)])
+        prompt += "\nYour choice of one land use type that best describes the image:"
+
+        return prompt
+
 
 def main():
-    dataset = PatternNetDataset()
+    dataset = PatternNetDataset(credential_path=".secrets/openai.jsonl")
     print(dataset.folders, dataset.folder2class)
     hf_dataset = dataset.construct_hf_dataset().cast_column("image", Image())
 
