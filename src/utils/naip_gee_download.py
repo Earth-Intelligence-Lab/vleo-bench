@@ -9,21 +9,8 @@ shp = gpd.read_file(shapefile_path).to_crs(4326).iloc[[282, 283, 284]]
 shp_bounds = shp.to_crs(3857).bounds.to_numpy()
 
 
-def export_image(polygon, index, bounds, target_width=1920, target_height=1080):
+def export_image(polygon, index, max_dimension=1024):
     roi = ee.Geometry.Polygon(polygon)
-    xmin, ymin, xmax, ymax = bounds
-    bbox_width = (xmax - xmin) / 0.6
-    bbox_height = (ymax - ymin) / 0.6
-
-    aspect_ratio = bbox_width / bbox_height
-    if aspect_ratio > (target_width / target_height):
-        # Bounding box is wider than the target aspect ratio
-        scale = bbox_width / target_width
-    else:
-        # Bounding box is taller than the target aspect ratio
-        scale = bbox_height / target_height
-
-    scale = max(scale * 0.6, 0.6)
 
     collection = (ee.ImageCollection('USDA/NAIP/DOQQ')
                   .filterBounds(roi)
@@ -36,16 +23,17 @@ def export_image(polygon, index, bounds, target_width=1920, target_height=1080):
         print(roi.getInfo())
         return
 
-    image = collection.select(["R", "G", "B"]).mosaic()
+    image = collection.select(["R", "G", "B"]).mosaic().clipToBoundsAndScale(roi, maxDimension=max_dimension)
+    image_scale = image.select('R').projection().nominalScale()
 
     task = ee.batch.Export.image.toCloudStorage(
         fileNamePrefix=f"Landmarks/NAIP_Scaled/NAIP_{index}",
-        image=image.clip(roi),
+        image=image,
         description=f"NAIP_{index}",
         bucket="vleo_benchmark",
         maxPixels=1e13,
         region=roi,
-        scale=scale,
+        scale=image_scale,
     )
     task.start()
 
