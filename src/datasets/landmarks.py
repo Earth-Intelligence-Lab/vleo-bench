@@ -7,8 +7,11 @@ from typing import List
 
 import geopandas
 import numpy as np
+import pandas as pd
 from datasets import Dataset, Image
 import PIL.Image as PILImage
+from matplotlib import pyplot as plt
+
 from src.datasets.dataset import VLEODataset
 from src.utils.gpt4v_chat import resume_from_jsonl, dump_to_jsonl
 
@@ -33,6 +36,14 @@ class AerialLandmarksDataset(VLEODataset):
         prompt = ("Make an educated guess about the name of the landmark shown in the image. Think step by step, "
                   "and then output your answer in the last line. Choose one of the options below as your answer:\n")
         prompt += "\n".join([f"{i + 1}. {option}" for i, option in enumerate(options)])
+
+        return prompt
+
+    @staticmethod
+    def get_user_prompt_state():
+        prompt = ("Make an educated guess about the specific state in the United States in which the image was taken. "
+                  "Think step by step, and then output your answer in the last line. You should output your full "
+                  "thought process, but only answer the name of the state in the last line.")
 
         return prompt
 
@@ -88,7 +99,7 @@ class AerialLandmarksDataset(VLEODataset):
             random.shuffle(options)
 
             payload, response = self.query_openai(image_base64, system=self.system_message,
-                                                  user=self.get_user_prompt(options), max_tokens=1024)
+                                                  user=self.get_user_prompt_state(), max_tokens=1024)
             print(idx, response["choices"][0]["message"]["content"])
             data_item.pop("image")
 
@@ -102,11 +113,67 @@ class AerialLandmarksDataset(VLEODataset):
             dump_to_jsonl(final_results, result_path)
 
 
+def evaluation(result_path):
+    result_json = pd.read_json(result_path, lines=True)
+    result_json["model_response"] = result_json["response"].apply(lambda x: x["choices"][0]["message"]["content"])
+    result_json["model_answer"] = result_json["model_response"].apply(lambda x: x.split("\n")[-1])
+    result_json["is_refusal"] = result_json["model_response"].apply(lambda x: "sorry" in x)
+    result_json["is_correct"] = result_json[["name", "model_answer"]].apply(lambda x: x["name"] in x["model_answer"], axis=1)
+
+    print(np.unique(result_json["instanceOfLabels"].sum(), return_counts=True))
+
+    correct_rate = result_json[~result_json["is_refusal"]]["is_correct"].mean()
+    refusal_rate = result_json["is_refusal"].mean()
+    print(correct_rate, refusal_rate)
+
+    correct_results = result_json[result_json["is_correct"]]
+    incorrect_results = result_json[~result_json["is_correct"]]
+
+    print(np.unique(correct_results["instanceOfLabels"].sum(), return_counts=True))
+    print(np.unique(incorrect_results["instanceOfLabels"].sum(), return_counts=True))
+    print(result_json["is_correct"])
+
+    correct_results.to_csv("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/gpt-4v-correct.csv", index=False)
+    incorrect_results.to_csv("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/gpt-4v-incorrect.csv", index=False)
+
+
+def plot():
+    import geoplot as gplt
+    import geoplot.crs as gcrs
+
+    contiguous_usa = geopandas.read_file(gplt.datasets.get_path('contiguous_usa'))
+    shp = geopandas.read_file("./data/Landmarks/all_unions_polygons_convexhulls_metadata_wikidata_us.gpkg")
+    shp["area"] = shp.to_crs(3857).area
+    shp["centroids"] = shp["geometry"].centroid
+    shp.set_geometry("centroids", inplace=True)
+
+    ax = gplt.polyplot(
+        contiguous_usa, projection=gcrs.AlbersEqualArea(),
+        edgecolor='white', facecolor='lightgray',
+        figsize=(12, 8)
+    )
+    gplt.pointplot(
+        shp, ax=ax,
+        hue='area', cmap='Blues',
+        scheme='quantiles',
+        scale='area', limits=(1, 10),
+        legend=True, legend_var='scale',
+        # legend_kwargs={'frameon': False},
+        # legend_values=[-110, 1750, 3600, 5500, 7400],
+        # legend_labels=['-110 feet', '1750 feet', '3600 feet', '5500 feet', '7400 feet']
+    )
+    ax.set_title('Aerial Landmarks Coverage', fontsize=16)
+
+    plt.show()
+
+
 def main():
     dataset = AerialLandmarksDataset(".secrets/openai.jsonl")
-    # dataset.query_gpt4("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/gpt-4v.jsonl")
+    dataset.query_gpt4("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/gpt-4v-state.jsonl")
     # dataset.construct_hf_dataset().push_to_hub("danielz01/landmarks", "NAIP")
 
 
 if __name__ == "__main__":
-    main()
+    evaluation("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/gpt-4v.jsonl")
+    # main()
+    # plot()
