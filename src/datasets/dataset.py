@@ -1,7 +1,7 @@
 import json
 import os
 from abc import ABC
-from typing import List
+from typing import List, Union
 import datetime
 
 import openai
@@ -32,6 +32,7 @@ class VLEODataset(ABC):
                       " information.")
     openai_api_org = None
     openai_api_key = None
+    start_time = int(datetime.datetime.utcnow().timestamp())
 
     def __init__(self, credential_path: str):
         credentials = []
@@ -49,7 +50,7 @@ class VLEODataset(ABC):
 
     def _update_usage(self):
         self.credentials.reset_index().to_json(
-            self.credential_path.replace(".jsonl", f"_{int(datetime.datetime.utcnow().timestamp())}.jsonl"),
+            self.credential_path.replace(".jsonl", f"_{self.start_time}.jsonl"),
             lines=True,
             orient="records"
         )
@@ -79,10 +80,13 @@ class VLEODataset(ABC):
         return openai_api_key, openai_api_org
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
-    def query_openai(self, base64_image: str, system: str, user: str, t: float = 0.2, max_tokens: int = 300,
+    def query_openai(self, base64_image: Union[List[str], str], system: str, user: str, t: float = 0.2, max_tokens: int = 300,
                      demos=None):
         if demos is None:
             demos = []
+
+        if isinstance(base64_image, str):
+            base64_image = [base64_image]
 
         openai_api_key, openai_api_org = self.get_openai_credentials()
 
@@ -92,7 +96,35 @@ class VLEODataset(ABC):
             "OpenAI-Organization": openai_api_org
         }
 
-        # print(system + "\n" + user)
+        print(system + "\n" + user)
+
+        if len(base64_image) == 1:
+            user_message = [
+                        {
+                            "type": "text",
+                            "text": user
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{base64_image}",
+                                "detail": "high"
+                            }
+                        }
+                    ]
+        else:
+            user_message = [{
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{x}",
+                                "detail": "high"
+                            }
+                        } for x in base64_image] + [
+                        {
+                            "type": "text",
+                            "text": user
+                        },
+                    ]
 
         payload = {
             "model": "gpt-4-vision-preview",
@@ -109,19 +141,7 @@ class VLEODataset(ABC):
                 *demos,
                 {
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": user
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{base64_image}",
-                                "detail": "high"
-                            }
-                        }
-                    ]
+                    "content": user_message
                 }
             ],
             "max_tokens": max_tokens,
@@ -129,16 +149,21 @@ class VLEODataset(ABC):
         }
 
         response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
+        remaining_requests = int(response.headers["x-ratelimit-remaining-requests"])
+        reset_time = response.headers["x-ratelimit-reset-requests"]
         if not response.ok:
             if "RPD" in str(response.json()):
-                print("Rate limit exceeded\n" + str(response.json()))
+                print(f"Rate limit exceeded. Reset in {reset_time}\n" + str(response.json()))
                 self.credentials.loc[openai_api_org, "usage"] = 100
                 retry_response = self.query_openai(base64_image, system, user, t, max_tokens, demos)
                 return retry_response
             else:
                 raise IOError(str(response.json()))
         else:
-            self.credentials.loc[openai_api_org, "usage"] += 1
+            reset_time = response.headers["x-ratelimit-reset-requests"]
+            print(f"{remaining_requests} queries left for {openai_api_org}. Reset in {reset_time}")
+            self.credentials.loc[openai_api_org, "usage"] = 100 - remaining_requests
+            self._update_usage()
 
         return payload, response.json()
 
