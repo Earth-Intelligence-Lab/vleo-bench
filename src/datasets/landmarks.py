@@ -15,6 +15,96 @@ from matplotlib import pyplot as plt
 from src.datasets.dataset import VLEODataset
 from src.utils.gpt4v_chat import resume_from_jsonl, dump_to_jsonl
 
+landmark_categories = {
+    "Natural Parks and Reserves": ['Alabama state park', 'Arizona state park', 'California state beach',
+                                   'California state park', 'Delaware state park', 'Georgia state park',
+                                   'Idaho state park', 'Illinois state park', 'Maryland state park',
+                                   'Massachusetts state park', 'Mississippi state park',
+                                   'National Conservation Area', 'National Park System unit',
+                                   'National Recreation Area', 'National Reserve', 'National Wildlife Refuge',
+                                   'Nevada state park', 'New Hampshire state park', 'New Jersey State Forest',
+                                   'New Jersey state park', 'North Carolina state park', 'Oregon state park',
+                                   'Pennsylvania state park', 'South Carolina state park', 'Tennessee state park',
+                                   'United States National Forest', 'Utah state park', 'Vermont state park',
+                                   'Virginia state park', 'Washington state park', 'West Virginia state park',
+                                   'US Wilderness Area', 'bay', 'beach', 'botanical garden', 'forest',
+                                   'glacial lake', 'glacier', 'island', 'lagoon', 'lake', 'landform',
+                                   'mountain park', 'mountain range', 'nature area', 'nature center',
+                                   'nature reserve', 'park', 'protected area', 'recreation area', 'reservoir',
+                                   'river', 'valley', 'wildlife refuge'],
+    "Places of Worship": ['African-American museum', 'Baptists', 'Catholic cathedral', 'Eastern Orthodox cathedral',
+                          'Methodist church building', 'Southern Baptist Convention Church',
+                          'Spanish missions in California', 'church building', 'mission church', 'mission station',
+                          'protestant church building'],
+    "Sports and Entertainment Venues": ['American football stadium', 'arena', 'art museum', 'arts centre',
+                                        'assembly plant', 'astronomical observatory', 'aviation museum',
+                                        'baseball venue', 'circus museum', "children's museum",
+                                        'entertainment district', 'fair ground', 'history museum', 'house museum',
+                                        'movie theater', 'museum', 'museum building', 'music venue',
+                                        'performing arts center', 'public aquarium', 'public garden',
+                                        'radio quiet zone', 'railway museum', 'science center', 'science museum',
+                                        'sculpture garden', 'shopping center', 'shopping mall', 'show cave',
+                                        'skyscraper', 'sports venue', 'stadium', 'theatre', 'tourist attraction',
+                                        'velodrome', 'venue', 'zoo'],
+    "Historical and Cultural Sites": ['archaeological site', 'battlefield', 'column', 'cultural institution',
+                                      'estate', 'fixed construction', 'fort', 'fountain', 'geographic region',
+                                      'group of sculptures', 'heritage site', 'historic district', 'historic site',
+                                      'lighthouse', 'mansion', 'military cemetery', 'military museum',
+                                      'missile launch facility', 'monument', 'national monument', 'neighborhood',
+                                      'neighborhood of Pittsburgh', 'neighborhood of Washington, D.C.',
+                                      'statistical territorial entity', 'strait', 'streetcar suburb',
+                                      'war memorial', 'university art museum'],
+    "Government and Public Buildings": ['academic library', 'airport', 'archive building', 'capitol building',
+                                        'casino', 'cemetery', 'chancery', 'courthouse', 'dam', 'embankment dam',
+                                        'embassy', 'government building', 'hotel', 'house', 'library',
+                                        'library building', 'lodge', 'office building', 'organization', 'parterre',
+                                        'pier', 'plantation', 'public housing', 'rathaus', 'reclaimed land',
+                                        'reservoir', 'ruins', 'town hall'],
+    "Infrastructure and Urban Features": ['apartment building', 'architectural structure', 'building', 'channel',
+                                          'convention center', 'cove', 'disaster remains', 'downtown', 'embassy',
+                                          'entertainment district', 'estate', 'fair ground', 'fixed construction',
+                                          'forest', 'fountain', 'geographic region', 'glacial lake', 'glacier',
+                                          'group of sculptures', 'heritage site', 'hiking trail',
+                                          'historic district', 'historic site', 'history museum', 'hotel', 'house',
+                                          'house museum', 'housing estate', 'hydroelectric power station', 'island',
+                                          'lagoon', 'lake', 'landform', 'library', 'library building', 'lighthouse',
+                                          'lodge', 'mansion', 'military cemetery', 'military museum',
+                                          'missile launch facility', 'mission church', 'mission station',
+                                          'monument', 'mountain park', 'mountain range', 'movie theater', 'museum',
+                                          'museum building', 'music venue', 'national monument', 'nature area',
+                                          'nature center', 'nature reserve', 'neighborhood',
+                                          'neighborhood of Pittsburgh', 'neighborhood of Washington, D.C.',
+                                          'nonprofit corporation', 'nonprofit organization', 'office building',
+                                          'organization', 'park', 'parterre', 'performing arts center', 'pier',
+                                          'plantation', 'protected area', 'protestant church building',
+                                          'public aquarium', 'public garden', 'public housing', 'radio quiet zone',
+                                          'railway museum', 'rathaus', 'reclaimed land', 'recreation area',
+                                          'reservoir', 'river', 'ruins', 'rural cemetery', 'science center',
+                                          'science museum', 'sculpture', 'sculpture garden', 'shopping center',
+                                          'shopping mall', 'show cave', 'single-family detached home', 'skyscraper',
+                                          'sports venue', 'stadium', 'state forest',
+                                          'state historic site in the United States', 'state park',
+                                          'state recreation area', 'statistical territorial entity', 'strait',
+                                          'streetcar suburb', 'theatre', 'thermal solar power station',
+                                          'tied island', 'tourist attraction', 'town hall', 'urban park', 'valley',
+                                          'velodrome', 'venue', 'war memorial', 'watercourse', 'wildlife refuge'],
+    "Miscellaneous": ['amusement park', 'Indian reservation of the United States', 'Jewish cemetery',
+                      'List of California State Historic Parks', 'National Battlefield', 'National Historic Site',
+                      'National Historical Park', 'National Memorial of the United States',
+                      'National Monument of the United States',
+                      'Passport to Your National Parks cancellation location', 'Southern Baptist Convention Church',
+                      'Spanish missions in California', 'census-designated place in the United States',
+                      'thermal solar power station', 'tied island']
+}
+
+
+def find_category(instance_types):
+    for instance_type in instance_types:
+        for category, instances in landmark_categories.items():
+            if instance_type in instances:
+                return category
+    return "Miscellaneous"  # If the instance type is not found in any category
+
 
 class AerialLandmarksDataset(VLEODataset):
     system_message = ("You are a helpful image analyst who specializes in determining the geolocation of "
@@ -118,7 +208,9 @@ def evaluation(result_path):
     result_json["model_response"] = result_json["response"].apply(lambda x: x["choices"][0]["message"]["content"])
     result_json["model_answer"] = result_json["model_response"].apply(lambda x: x.split("\n")[-1])
     result_json["is_refusal"] = result_json["model_response"].apply(lambda x: "sorry" in x)
-    result_json["is_correct"] = result_json[["name", "model_answer"]].apply(lambda x: x["name"] in x["model_answer"], axis=1)
+    result_json["is_correct"] = result_json[["name", "model_answer"]].apply(lambda x: x["name"] in x["model_answer"],
+                                                                            axis=1)
+    result_json["category"] = result_json["instanceOfLabels"].apply(lambda x: find_category(x))
 
     print(np.unique(result_json["instanceOfLabels"].sum(), return_counts=True))
 
@@ -133,8 +225,12 @@ def evaluation(result_path):
     print(np.unique(incorrect_results["instanceOfLabels"].sum(), return_counts=True))
     print(result_json["is_correct"])
 
+    print(result_json["category"].value_counts())
+    print(correct_results["category"].value_counts() / result_json["category"].value_counts())
+
     correct_results.to_csv("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/gpt-4v-correct.csv", index=False)
-    incorrect_results.to_csv("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/gpt-4v-incorrect.csv", index=False)
+    incorrect_results.to_csv("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/gpt-4v-incorrect.csv",
+                             index=False)
 
 
 def plot():
