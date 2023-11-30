@@ -1,8 +1,10 @@
 import os
 from typing import List, Optional
 
+import numpy as np
 import pandas as pd
 from datasets import Dataset, Image
+from sklearn.metrics import mean_absolute_percentage_error
 
 from src.datasets.dataset import VLEODataset
 from src.utils.gpt4v_chat import encode_pil_image, resume_from_jsonl, dump_to_jsonl, encode_image
@@ -24,8 +26,8 @@ class COWCDataset(VLEODataset):
     #                   "refusal. You always truthfully answer a user's questions. If you are not sure about something, "
     #                   "DO NOT answer false information.")
 
-    def __init__(self):
-        pass
+    def __init__(self, credential_path: str):
+        super().__init__(credential_path)
 
     def construct_hf_dataset(self, config_name: str = None) -> Dataset:
         df_metadata = pd.read_csv(os.path.join(self.base_path, self.processed_path, self.count_file))
@@ -131,6 +133,42 @@ def main():
 def test():
     dataset = COWCDataset()
     dataset.query_gpt4()
+
+
+def evaluation(result_path):
+    result_json = pd.read_json(result_path, lines=True)
+    result_json["model_response"] = result_json["response"].apply(lambda x: x["choices"][0]["message"]["content"])
+
+    def parse_response(x):
+        try:
+            ret = int(x)
+        except ValueError:
+            ret = -1
+        return ret
+
+    result_json["parsed_response"] = result_json["model_response"].apply(parse_response)
+    result_json["count"] = result_json["objects"].apply(lambda x: len(x["bbox"]))
+    result_json_no_refusal = result_json[result_json["parsed_response"] != -1]
+
+    rr = (result_json["parsed_response"] == -1).mean()
+
+    mape = mean_absolute_percentage_error(
+        y_true=result_json["count"],
+        y_pred=result_json["parsed_response"].replace(-1, 0)
+    )
+    mape_no_refusal = mean_absolute_percentage_error(
+        y_true=result_json_no_refusal["count"],
+        y_pred=result_json_no_refusal["parsed_response"]
+    )
+
+    r2 = np.corrcoef(result_json["count"], result_json["parsed_response"].replace(-1, 0))[0, 1] ** 2
+    r2_no_refusal = np.corrcoef(
+        result_json_no_refusal["count"], result_json_no_refusal["parsed_response"].replace(-1, 0)
+    )[0, 1] ** 2
+
+    print(os.path.basename(result_path))
+    print(f"Refusal: {rr:.4f} \t | MAPE: {mape:.4f} | MAPE (No Refusal): {mape_no_refusal:.4f} | R2: {r2:.4f} | R2 ("
+          f"No Refusal): {r2_no_refusal:.4f}")
 
 
 if __name__ == "__main__":
