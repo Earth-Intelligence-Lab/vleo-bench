@@ -31,11 +31,14 @@ landmark_categories = {
                                    'glacial lake', 'glacier', 'island', 'lagoon', 'lake', 'landform',
                                    'mountain park', 'mountain range', 'nature area', 'nature center',
                                    'nature reserve', 'park', 'protected area', 'recreation area', 'reservoir',
-                                   'river', 'valley', 'wildlife refuge'],
+                                   'river', 'valley', 'wildlife refuge', 'provincial park of Canada',
+                                   'national park of Canada', 'dark-sky preserve', 'Connecticut state park',
+                                   'United States National Marine Sanctuary', 'waterfall', 'state forest of Wisconsin'],
     "Places of Worship": ['African-American museum', 'Baptists', 'Catholic cathedral', 'Eastern Orthodox cathedral',
                           'Methodist church building', 'Southern Baptist Convention Church',
                           'Spanish missions in California', 'church building', 'mission church', 'mission station',
-                          'protestant church building'],
+                          'protestant church building', 'Southern Baptist Convention Church', 'chapel', 'synagogue',
+                          'Anglican or episcopal cathedral'],
     "Sports and Entertainment Venues": ['American football stadium', 'arena', 'art museum', 'arts centre',
                                         'assembly plant', 'astronomical observatory', 'aviation museum',
                                         'baseball venue', 'circus museum', "children's museum",
@@ -45,7 +48,7 @@ landmark_categories = {
                                         'radio quiet zone', 'railway museum', 'science center', 'science museum',
                                         'sculpture garden', 'shopping center', 'shopping mall', 'show cave',
                                         'skyscraper', 'sports venue', 'stadium', 'theatre', 'tourist attraction',
-                                        'velodrome', 'venue', 'zoo'],
+                                        'velodrome', 'venue', 'zoo', 'amusement park', 'transport museum'],
     "Historical and Cultural Sites": ['archaeological site', 'battlefield', 'column', 'cultural institution',
                                       'estate', 'fixed construction', 'fort', 'fountain', 'geographic region',
                                       'group of sculptures', 'heritage site', 'historic district', 'historic site',
@@ -53,13 +56,19 @@ landmark_categories = {
                                       'missile launch facility', 'monument', 'national monument', 'neighborhood',
                                       'neighborhood of Pittsburgh', 'neighborhood of Washington, D.C.',
                                       'statistical territorial entity', 'strait', 'streetcar suburb',
-                                      'war memorial', 'university art museum'],
+                                      'war memorial', 'university art museum', 'National Historic Site',
+                                      'National Historical Park', 'List of California State Historic Parks',
+                                      'National Memorial of the United States',
+                                      'National Monument of the United States',
+                                      'National Battlefield', 'Spanish missions in California', 'Jewish cemetery',
+                                      'historic building', 'national military park'
+                                      ],
     "Government and Public Buildings": ['academic library', 'airport', 'archive building', 'capitol building',
                                         'casino', 'cemetery', 'chancery', 'courthouse', 'dam', 'embankment dam',
                                         'embassy', 'government building', 'hotel', 'house', 'library',
                                         'library building', 'lodge', 'office building', 'organization', 'parterre',
                                         'pier', 'plantation', 'public housing', 'rathaus', 'reclaimed land',
-                                        'reservoir', 'ruins', 'town hall'],
+                                        'reservoir', 'ruins', 'town hall', 'official residence'],
     "Infrastructure and Urban Features": ['apartment building', 'architectural structure', 'building', 'channel',
                                           'convention center', 'cove', 'disaster remains', 'downtown', 'embassy',
                                           'entertainment district', 'estate', 'fair ground', 'fixed construction',
@@ -87,22 +96,24 @@ landmark_categories = {
                                           'state recreation area', 'statistical territorial entity', 'strait',
                                           'streetcar suburb', 'theatre', 'thermal solar power station',
                                           'tied island', 'tourist attraction', 'town hall', 'urban park', 'valley',
-                                          'velodrome', 'venue', 'war memorial', 'watercourse', 'wildlife refuge'],
-    "Miscellaneous": ['amusement park', 'Indian reservation of the United States', 'Jewish cemetery',
-                      'List of California State Historic Parks', 'National Battlefield', 'National Historic Site',
-                      'National Historical Park', 'National Memorial of the United States',
-                      'National Monument of the United States',
-                      'Passport to Your National Parks cancellation location', 'Southern Baptist Convention Church',
-                      'Spanish missions in California', 'census-designated place in the United States',
-                      'thermal solar power station', 'tied island']
+                                          'velodrome', 'venue', 'war memorial', 'watercourse', 'wildlife refuge',
+                                          'thermal solar power station', 'television tower', 'public library',
+                                          'community center', ''
+                                          ],
+    "Miscellaneous": ['Indian reservation of the United States',
+                      'Passport to Your National Parks cancellation location',
+                      'census-designated place in the United States', 'tied island']
 }
 
 
 def find_category(instance_types):
     for instance_type in instance_types:
         for category, instances in landmark_categories.items():
-            if instance_type in instances:
+            if instance_type.lower() in list(map(str.lower, instances)):
                 return category
+            elif "park" in instance_type.lower():
+                return "Natural Parks and Reserves"
+
     return "Miscellaneous"  # If the instance type is not found in any category
 
 
@@ -204,33 +215,72 @@ class AerialLandmarksDataset(VLEODataset):
 
 
 def evaluation(result_path):
+    model_name = os.path.basename(result_path).removesuffix(".jsonl")
+    print(f"---------------- {model_name} ----------------")
+
     result_json = pd.read_json(result_path, lines=True)
-    result_json["model_response"] = result_json["response"].apply(lambda x: x["choices"][0]["message"]["content"])
+    if "gpt" in model_name.lower():
+        result_json["model_response"] = result_json["response"].apply(lambda x: x["choices"][0]["message"]["content"])
+    else:
+        result_json["model_response"] = result_json["response"]
+
+    refusal_keywords = [
+        "sorry", "difficult"
+    ]
+
+    def check_correctness(answer: str, model_answer: str, options: List[str]):
+        if sum([x.lower() in model_answer.lower() for x in options]) > 1:
+            return False
+        if answer.lower() in model_answer.lower():
+            return True
+        if model_answer[0].isdigit() and int(model_answer[0]) == options.index(answer):
+            return True
+
+        return False
+
     result_json["model_answer"] = result_json["model_response"].apply(lambda x: x.split("\n")[-1])
-    result_json["is_refusal"] = result_json["model_response"].apply(lambda x: "sorry" in x)
-    result_json["is_correct"] = result_json[["name", "model_answer"]].apply(lambda x: x["name"] in x["model_answer"],
-                                                                            axis=1)
+    result_json["is_refusal"] = result_json["model_response"].apply(lambda x: any([k in x for k in refusal_keywords]))
+    result_json["is_correct"] = result_json[["name", "model_answer", "options"]].apply(
+        lambda x: check_correctness(x["name"], x["model_answer"], x["options"]), axis=1
+    )
     result_json["category"] = result_json["instanceOfLabels"].apply(lambda x: find_category(x))
 
-    print(np.unique(result_json["instanceOfLabels"].sum(), return_counts=True))
-
-    correct_rate = result_json[~result_json["is_refusal"]]["is_correct"].mean()
+    correct_rate = result_json["is_correct"].mean()
     refusal_rate = result_json["is_refusal"].mean()
     print(correct_rate, refusal_rate)
 
     correct_results = result_json[result_json["is_correct"]]
     incorrect_results = result_json[~result_json["is_correct"]]
 
-    print(np.unique(correct_results["instanceOfLabels"].sum(), return_counts=True))
-    print(np.unique(incorrect_results["instanceOfLabels"].sum(), return_counts=True))
-    print(result_json["is_correct"])
+    category_counts = result_json["category"].value_counts()
+    print(category_counts)
+    print((correct_results["category"].value_counts() / result_json["category"].value_counts()).loc[category_counts.index] * 100)
 
-    print(result_json["category"].value_counts())
-    print(correct_results["category"].value_counts() / result_json["category"].value_counts())
+    export_columns = ["index", "name", "model_response"]
+    result_json.to_csv(f"./data/Landmarks/{model_name}.csv", index=False)
+    correct_results[export_columns].to_csv(f"./data/Landmarks/{model_name}-correct.csv", index=False)
+    incorrect_results[export_columns].to_csv(f"./data/Landmarks/{model_name}-incorrect.csv", index=False)
 
-    correct_results.to_csv("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/gpt-4v-correct.csv", index=False)
-    incorrect_results.to_csv("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/gpt-4v-incorrect.csv",
-                             index=False)
+    shp = geopandas.GeoDataFrame(
+        result_json,
+        crs="EPSG:4269",
+        geometry=geopandas.points_from_xy(result_json.lon, result_json.lat)
+    )
+    usa = geopandas.read_file("./data/Landmarks/cb_2018_us_state_500k.zip")
+    shp = shp.sjoin(usa, how="left", op='within')
+    state_accuracy = shp.groupby('NAME').is_correct.mean().reset_index()
+    heatmap_data = usa.merge(state_accuracy, on='NAME', how='left')
+    heatmap_data["is_correct"] *= 100
+
+    print(heatmap_data[["NAME", "is_correct"]].dropna().sort_values(by="is_correct").iloc[:10])
+    heatmap_data.plot(column='is_correct', cmap='jet_r', legend=True, legend_kwds={'orientation': 'horizontal'})
+
+    plt.title('Zero-shot Landmark Recognition Accuracy (%) by State')
+    plt.xlabel("Longitude")
+    plt.ylabel("Latitude")
+    plt.tight_layout()
+    plt.savefig(f"./data/Landmarks/landmarks-{model_name}-accuracy-state.pdf", dpi=500)
+    plt.close(plt.gcf())
 
 
 def plot():
@@ -239,9 +289,15 @@ def plot():
 
     contiguous_usa = geopandas.read_file(gplt.datasets.get_path('contiguous_usa'))
     shp = geopandas.read_file("./data/Landmarks/all_unions_polygons_convexhulls_metadata_wikidata_us.gpkg")
-    shp["area"] = shp.to_crs(3857).area
-    shp["centroids"] = shp["geometry"].centroid
+    shp["area"] = shp.to_crs('+proj=cea').area / 1e+6
+    shp["centroids"] = shp["geometry"].to_crs('+proj=cea').centroid.to_crs(4326)
     shp.set_geometry("centroids", inplace=True)
+    shp["instanceOfLabels"] = shp["instanceOfLabels"].apply(json.loads)
+    shp["categories"] = shp["instanceOfLabels"].apply(find_category)
+    print(shp["categories"])
+    print(shp[["categories", "area"]].groupby("categories").median()["area"])
+    print(shp["area"].median())
+    print(shp[shp["categories"] == "Miscellaneous"][["name", "instanceOfLabels"]])
 
     ax = gplt.polyplot(
         contiguous_usa, projection=gcrs.AlbersEqualArea(),
@@ -265,11 +321,13 @@ def plot():
 
 def main():
     dataset = AerialLandmarksDataset(".secrets/openai.jsonl")
-    dataset.query_gpt4("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/gpt-4v-state.jsonl")
+    dataset.query_gpt4("./data/Landmarks/llava.jsonl")
     # dataset.construct_hf_dataset().push_to_hub("danielz01/landmarks", "NAIP")
 
 
 if __name__ == "__main__":
     evaluation("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/gpt-4v.jsonl")
-    # main()
-    # plot()
+    evaluation("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/instructblip-flan-t5-xxl.jsonl")
+    evaluation("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/instructblip-vicuna-13b.jsonl")
+    evaluation("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/llava-v1.5.jsonl")
+    evaluation("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/qwen-vl.jsonl")
