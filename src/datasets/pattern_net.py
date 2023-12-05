@@ -116,6 +116,21 @@ class PatternNetDataset(VLEODataset):
         'wastewater_treatment_plant'
     ]
 
+    categories_reassigned = {
+        "airplane": "Airplane", "baseball_field": "Baseball Field", "basketball_court": "Basketball Court",
+        "beach": "Beach", "Bridge": "Bridge", "cemetery": "Cemetery", "chaparral": "Chaparral",
+        "christmas_tree_farm": "Christmas Tree Farm", "closed_road": "Closed Road", "coastal_mansion": "Coastal Mansion",
+        "crosswalk": "Crosswalk", "dense_residential": "Residential", "ferry_terminal": "Harbor",
+        "football_field": "Football Field", "forest": "Forest", "freeway": "Freeway", "golf_course": "Golf Course",
+        "harbor": "Harbor", "intersection": "Intersection", "mobile_home_park": "Mobile Home Park",
+        "nursing_home": "Nursing Home", "oil_gas_field": "Oil Gas Field", "oil_well": "Oil Well",
+        "overpass": "Overpass", "parking_lot": "Parking Space", "parking_space": "Parking Space", "railway": "Railway",
+        "river": "River", "runway": "Runway", "runway_marking": "Runway", "shipping_yard": "Shipping Yard",
+        "solar_panel": "Solar Panel", "sparse_residential": "Residential", "storage_tank": "Storage Tank",
+        "swimming_pool": "Swimming Pool", "tennis_court": "Tennis Court", "transformer_station": "Transformer Station",
+        "wastewater_treatment_plant": "Wastewater Treatment Plant"
+    }
+
     def __init__(self, credential_path: str, root: str = "data", download: bool = False,
                  checksum: bool = False) -> None:
         """Initialize a new PatternNet dataset instance.
@@ -154,7 +169,7 @@ class PatternNetDataset(VLEODataset):
         prompt = ("You are given a satellite image and a list of land usage types or object names. Classify the image "
                   "into one of the following options. Choose the best option that describes the given image. A list "
                   "of possible options:\n")
-        prompt += ";\n".join([f"{i + 1}. {option}" for i, option in enumerate(self.categories_normalized)])
+        prompt += ";\n".join([f"{i + 1}. {option}" for i, option in enumerate(sorted(set(self.categories_reassigned.values())))])
         prompt += "\nYour choice of one option that best describes the image:"
 
         return prompt
@@ -183,7 +198,7 @@ class PatternNetDataset(VLEODataset):
 
             image_base64 = encode_image(data_item["image"])
             payload, response = self.query_openai(image_base64, system=self.system_message, user=self.get_user_prompt())
-            print(idx, response)
+            print(idx, response["choices"][0]["message"]["content"])
             data_item.pop("image")
             final_results.append({
                 "index": idx,
@@ -198,7 +213,7 @@ class PatternNetDataset(VLEODataset):
 def main():
     dataset = PatternNetDataset(credential_path=".secrets/openai.jsonl")
     print(dataset.folders, dataset.folder2class)
-    dataset.query_gpt4("/home/danielz/PycharmProjects/vleo-bench/data/PatternNet/gpt-4v.jsonl", max_queries=2000)
+    dataset.query_gpt4("./data/PatternNet/gpt-4v-reassigned.jsonl", max_queries=1500)
 
 
 if __name__ == "__main__":
