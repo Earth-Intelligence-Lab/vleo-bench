@@ -3,6 +3,7 @@ import io
 import os
 import json
 import random
+import re
 from glob import glob
 import xml.etree.ElementTree as ET
 
@@ -11,6 +12,7 @@ from PIL import Image as PILImage
 
 import numpy as np
 from huggingface_hub.inference._text_generation import ValidationError
+from matplotlib import pyplot as plt
 from sklearn.metrics import mean_absolute_percentage_error
 from tqdm import tqdm
 
@@ -211,19 +213,33 @@ def main():
 
 def evaluation(result_path):
     result_json = pd.read_json(result_path, lines=True)
-    result_json["model_response"] = result_json["response"].apply(lambda x: x["choices"][0]["message"]["content"])
+    if "gpt" in os.path.basename(result_path).lower():
+        result_json["model_response"] = result_json["response"].apply(lambda x: x["choices"][0]["message"]["content"])
+    else:
+        result_json["model_response"] = result_json["response"]
+    if "count" not in result_json.columns:
+        result_json["objects"] = pd.read_json(os.path.join(os.path.dirname(result_path), "gpt-4v-counting.jsonl"), lines=True)["objects"]
 
-    def parse_response(x):
+    def parse_response(x: str):
+        replace_dict = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+                        "eight": 8, "nine": 9, "ten": 10}
+
+        x = str(x).strip().lower()
+        for old, new in replace_dict.items():
+            x = x.replace(old, str(new))
+
         try:
-            ret = int(x)
+            ret = int(re.search(r'\d+', x).group())
         except ValueError:
+            ret = -1
+        except AttributeError:
             ret = -1
         return ret
 
     result_json["parsed_response"] = result_json["model_response"].apply(parse_response)
     result_json["count"] = result_json["objects"].apply(lambda x: len(x["bbox"]))
-    result_json_no_refusal = result_json[result_json["parsed_response"] != -1]
-    result_json_refusal = result_json[result_json["parsed_response"] == -1]
+    result_json_no_refusal = result_json[result_json["parsed_response"] != -1].copy()
+    result_json_refusal = result_json[result_json["parsed_response"] == -1].copy()
 
     rr = (result_json["parsed_response"] == -1).mean()
 
@@ -242,10 +258,43 @@ def evaluation(result_path):
     )[0, 1] ** 2
 
     print(os.path.basename(result_path))
-    print(f"Refusal: {rr:.4f} \t | MAPE: {mape:.4f} | MAPE (No Refusal): {mape_no_refusal:.4f} | R2: {r2:.4f} | R2 ("
-          f"No Refusal): {r2_no_refusal:.4f}")
+    print(f"MAPE & MAPE (No Refusal) & R2: {r2:.4f} & R2 (No Refusal) & Refusal Rate")
+    print(f"{mape:.4f} & {mape_no_refusal:.4f} & {r2:.4f} & {r2_no_refusal:.4f} & {rr:.4f}")
     print(result_json_refusal)
+
+    import seaborn as sns
+
+    result_json_no_refusal["Predicted Count"] = result_json_no_refusal["parsed_response"]
+    result_json_no_refusal["True Count"] = result_json_no_refusal["count"]
+    fig, ax = plt.subplots(figsize=(6, 6))
+    sns.scatterplot(
+        data=result_json_no_refusal,
+        x="Predicted Count",
+        y="True Count",
+        color="k",
+        ax=ax,
+    )
+    sns.kdeplot(
+        data=result_json_no_refusal,
+        x="Predicted Count",
+        y="True Count",
+        levels=5,
+        fill=True,
+        alpha=0.6,
+        cut=2,
+        ax=ax,
+    )
+    plt.savefig(result_path.replace(".jsonl", ".pdf"))
+    plt.savefig(result_path.replace(".jsonl", ".png"))
 
 
 if __name__ == "__main__":
-    evaluation("/home/danielz/PycharmProjects/vleo-bench/data/NeonTreeEvaluation/gpt-4v-counting.jsonl")
+    files = [
+        "/home/danielz/PycharmProjects/vleo-bench/data/NeonTreeEvaluation/gpt-4v-counting.jsonl",
+        "/home/danielz/PycharmProjects/vleo-bench/data/NeonTreeEvaluation/evaluation-llava-v1.5-13b.jsonl",
+        "/home/danielz/PycharmProjects/vleo-bench/data/NeonTreeEvaluation/evaluation-Qwen-VL-Chat.jsonl",
+        "/home/danielz/PycharmProjects/vleo-bench/data/NeonTreeEvaluation/instructblip-flan-t5-xxl-counting.jsonl",
+        "/home/danielz/PycharmProjects/vleo-bench/data/NeonTreeEvaluation/instructblip-vicuna-13b-counting.jsonl"
+    ]
+    for file in files:
+        evaluation(file)
