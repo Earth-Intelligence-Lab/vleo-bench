@@ -4,9 +4,11 @@ from typing import List, Optional
 import numpy as np
 import pandas as pd
 from datasets import Dataset, Image
+from matplotlib import pyplot as plt
 from sklearn.metrics import mean_absolute_percentage_error
 
 from src.datasets.dataset import VLEODataset
+from src.utils.counting import parse_digit_response, calculate_counting_metrics, plot_scatter
 from src.utils.gpt4v_chat import encode_pil_image, resume_from_jsonl, dump_to_jsonl, encode_image
 
 
@@ -123,7 +125,7 @@ class COWCDataset(VLEODataset):
 
 
 def main():
-    dataset = COWCDataset()
+    dataset = COWCDataset(credential_path="./.secrets/openai.json")
 
     for city in ["Columbus", "Potsdam", "Selwyn", "Toronto", "Utah", "Vaihingen"]:
         hf_dataset = dataset.construct_hf_dataset(city).cast_column(column="image", feature=Image(decode=True))
@@ -131,45 +133,44 @@ def main():
 
 
 def test():
-    dataset = COWCDataset()
+    dataset = COWCDataset(credential_path="./.secrets/openai.json")
     dataset.query_gpt4()
 
 
 def evaluation(result_path):
+    *model, city = os.path.basename(result_path).removesuffix(".jsonl").split("-")
+    model_name = "-".join(model)
+    print(model_name, city)
+
     result_json = pd.read_json(result_path, lines=True)
-    result_json["model_response"] = result_json["response"].apply(lambda x: x["choices"][0]["message"]["content"])
+    if "gpt" in model_name:
+        result_json["model_response"] = result_json["response"].apply(lambda x: x["choices"][0]["message"]["content"])
+    else:
+        result_json["model_response"] = result_json["response"]
+    if "objects" not in result_json:
+        result_json["objects"] = pd.read_json(
+            os.path.join(os.path.dirname(result_path), f"gpt-4v-{city}.jsonl"), lines=True
+        )["objects"]
 
-    def parse_response(x):
-        try:
-            ret = int(x)
-        except ValueError:
-            ret = -1
-        return ret
-
-    result_json["parsed_response"] = result_json["model_response"].apply(parse_response)
+    result_json["parsed_response"] = result_json["model_response"].apply(parse_digit_response)
     result_json["count"] = result_json["objects"].apply(lambda x: len(x["bbox"]))
     result_json_no_refusal = result_json[result_json["parsed_response"] != -1]
+    result_json_no_refusal["Predicted Count"] = result_json_no_refusal["parsed_response"]
+    result_json_no_refusal["True Count"] = result_json_no_refusal["count"]
 
-    rr = (result_json["parsed_response"] == -1).mean()
+    rr, (mape, mape_no_refusal), (r2, r2_no_refusal) = calculate_counting_metrics(result_json, result_json_no_refusal)
 
-    mape = mean_absolute_percentage_error(
-        y_true=result_json["count"],
-        y_pred=result_json["parsed_response"].replace(-1, 0)
-    )
-    mape_no_refusal = mean_absolute_percentage_error(
-        y_true=result_json_no_refusal["count"],
-        y_pred=result_json_no_refusal["parsed_response"]
-    )
-
-    r2 = np.corrcoef(result_json["count"], result_json["parsed_response"].replace(-1, 0))[0, 1] ** 2
-    r2_no_refusal = np.corrcoef(
-        result_json_no_refusal["count"], result_json_no_refusal["parsed_response"].replace(-1, 0)
-    )[0, 1] ** 2
-
-    print(os.path.basename(result_path))
     print(f"Refusal: {rr:.4f} \t | MAPE: {mape:.4f} | MAPE (No Refusal): {mape_no_refusal:.4f} | R2: {r2:.4f} | R2 ("
           f"No Refusal): {r2_no_refusal:.4f}")
 
+    plot_scatter(result_json_no_refusal)
+
+    plt.savefig(result_path.replace(".jsonl", ".pdf"))
+    plt.savefig(result_path.replace(".jsonl", ".png"))
+
 
 if __name__ == "__main__":
-    test()
+    from glob import glob
+
+    for result_file in sorted(glob("./data/cowc-m/*.jsonl")):
+        evaluation(result_file)
