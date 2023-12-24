@@ -45,16 +45,28 @@ def calculate_counting_metrics(result_json, result_json_no_refusal):
 def plot_scatter(df, ax=None):
     import seaborn as sns
 
+    df["Predicted Count"] = df["parsed_response"]
+    df["True Count"] = df["count"]
+
     r2 = np.corrcoef(df["Predicted Count"], df["True Count"].replace(-1, 0))[0, 1] ** 2
+
+    max_limit = max(df["parsed_response"].max(), df["count"].max())
+    cmap = sns.color_palette("blend:#397CB8,#CFE2F3", as_cmap=True)
 
     if not ax:
         fig, ax = plt.subplots(figsize=(6, 6))
+
+    ax.set_xlim(0, max_limit)
+    ax.set_ylim(0, max_limit)
 
     sns.regplot(
         data=df,
         x="Predicted Count",
         y="True Count",
-        scatter_kws=dict(color="k"),
+        ci=None,
+        robust=True,
+        truncate=False,
+        scatter_kws=dict(marker="x", color="k"),
         line_kws=dict(color="red", linestyle="--"),
         ax=ax
     )
@@ -67,16 +79,15 @@ def plot_scatter(df, ax=None):
         alpha=0.6,
         cut=2,
         ax=ax,
+        cmap=cmap
     )
     ax.text(
         0.95, 0.95, f'$R^2 = {r2:.2f}$',
         verticalalignment='top', horizontalalignment='right',
         transform=ax.transAxes,
-        color='black', fontsize=12
+        color='black', fontsize=24
     )
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
-    ax.set_xlim(left=0)
-    ax.set_ylim(bottom=0)
 
     return ax

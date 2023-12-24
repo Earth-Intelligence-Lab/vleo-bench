@@ -137,7 +137,7 @@ def test():
     dataset.query_gpt4()
 
 
-def evaluation(result_path):
+def evaluation(result_path, ax=None):
     *model, city = os.path.basename(result_path).removesuffix(".jsonl").split("-")
     model_name = "-".join(model)
     print(model_name, city)
@@ -154,23 +154,43 @@ def evaluation(result_path):
 
     result_json["parsed_response"] = result_json["model_response"].apply(parse_digit_response)
     result_json["count"] = result_json["objects"].apply(lambda x: len(x["bbox"]))
-    result_json_no_refusal = result_json[result_json["parsed_response"] != -1]
+    result_json_no_refusal = result_json[result_json["parsed_response"] != -1].copy()
     result_json_no_refusal["Predicted Count"] = result_json_no_refusal["parsed_response"]
     result_json_no_refusal["True Count"] = result_json_no_refusal["count"]
 
     rr, (mape, mape_no_refusal), (r2, r2_no_refusal) = calculate_counting_metrics(result_json, result_json_no_refusal)
 
-    print(f"Refusal: {rr:.4f} \t | MAPE: {mape:.4f} | MAPE (No Refusal): {mape_no_refusal:.4f} | R2: {r2:.4f} | R2 ("
-          f"No Refusal): {r2_no_refusal:.4f}")
+    print(f"MAPE & MAPE (No Refusal) & R2 & R2 (No Refusal) & Refusal Rate")
+    print(f"{mape:.3f} & {mape_no_refusal:.3f} & {r2:.3f} & {r2_no_refusal:.3f} & {rr:.3f}")
 
-    plot_scatter(result_json_no_refusal)
+    plot_scatter(result_json_no_refusal, ax=ax)
+    ax.set_title(model_name)
 
-    plt.savefig(result_path.replace(".jsonl", ".pdf"))
-    plt.savefig(result_path.replace(".jsonl", ".png"))
+    # plt.savefig(result_path.replace(".jsonl", ".pdf"))
+    # plt.savefig(result_path.replace(".jsonl", ".png"))
+
+
+def combine_cities():
+    from glob import glob
+
+    model_names = {
+        "-".join(os.path.basename(x).removesuffix(".jsonl").split("-")[:-1]) for x in glob("./data/cowc-m/*.jsonl")
+    }
+    cities = ["Utah", "Potsdam", "Toronto", "Selwyn"]
+    for model_name in model_names:
+        dfs = []
+        for city in cities:
+            print(f"./data/cowc-m/{model_name}-{city}.jsonl")
+            df = pd.read_json(f"./data/cowc-m/{model_name}-{city}.jsonl", lines=True)
+            dfs.append(df)
+        dfs = pd.concat(dfs)
+        dfs.to_json(f"./data/cowc-m/{model_name}-combined.jsonl", orient="records", lines=True)
+        print(f"./data/cowc-m/{model_name}-combined.jsonl")
 
 
 if __name__ == "__main__":
     from glob import glob
 
-    for result_file in sorted(glob("./data/cowc-m/*.jsonl")):
+    combine_cities()
+    for result_file in sorted(glob("./data/cowc-m/*-combined.jsonl")):
         evaluation(result_file)

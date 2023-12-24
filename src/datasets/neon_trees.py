@@ -19,6 +19,7 @@ from tqdm import tqdm
 from src.datasets.dataset import VLEODataset
 from datasets import Dataset, Image, load_dataset
 
+from src.utils.counting import parse_digit_response, calculate_counting_metrics, plot_scatter
 from src.utils.gpt4v_chat import resume_from_jsonl, encode_image, dump_to_jsonl, encode_pil_image
 
 SYS_PROMPT = ("You are an expert in satellite and aerial image analysis. You can see the earth by reading the object "
@@ -55,7 +56,8 @@ class NeonTreeEvaluationDataset(VLEODataset):
     # "You always truthfully answer the user's question. If you are not sure about "
     # "something, don't answer false information."
 
-    def __init__(self, split: str = "evaluation"):
+    def __init__(self, credential_path: str, split: str = "evaluation"):
+        super().__init__(credential_path)
         assert split in self.splits
         self.split = split
 
@@ -117,57 +119,6 @@ class NeonTreeEvaluationDataset(VLEODataset):
     def construct_hf_dataset(self) -> Dataset:
         return Dataset.from_list(self._load_metadata()).cast_column("image", Image())
 
-    def generate_captions(self):
-        from huggingface_hub import InferenceClient
-
-        client = InferenceClient(
-            model="meta-llama/Llama-2-70b-chat-hf",
-            token=os.environ["HF_TOKEN"]
-        )
-
-        dest_path = "./data/NeonTreeEvaluation/captions-gpt-4.jsonl"
-
-        captions = []
-        for data_item in tqdm(self.construct_hf_dataset()):
-            if not data_item["objects"] or len(data_item["objects"]["bbox"]) > 50:
-                with open(dest_path, "a") as dest:
-                    dest.write(json.dumps({"path": data_item["path"], "caption": None}) + "\n")
-                continue
-
-            objects = np.array(data_item["objects"]["bbox"]).astype(int)
-
-            if len(objects) > 50:
-                chosen_objects_idx = np.random.choice(range(len(objects)), size=50, replace=False)
-                chosen_objects = objects[chosen_objects_idx]
-            else:
-                chosen_objects = objects
-
-            tree_description = "\n".join([f"Tree {i}: {bbox}" for i, bbox in enumerate(chosen_objects)])
-            if len(objects) > 50:
-                tree_description += "\n Too many trees. Input Truncated..."
-
-            user_prompt = CAPTIONING_PROMPTS.format(
-                trees=tree_description, h=data_item["height"], w=data_item["width"], count=data_item["count"]
-            )
-            # prompt = LLAMA2_TEMPLATE.format(
-            #     system_prompt=SYS_PROMPT,
-            #     user_msg_1=user_prompt
-            # )
-            print(data_item["path"], user_prompt)
-
-            try:
-                # output = client.text_generation(
-                #     prompt, do_sample=True, max_new_tokens=256, seed=0, temperature=0.75, top_p=0.7, top_k=50
-                # )
-                output = self.request_openai(system=SYS_PROMPT, user=user_prompt)
-            except ValidationError as e:
-                print(e)
-                continue
-
-            print(output["choices"][0]["message"]["content"])
-            with open(dest_path, "a") as dest:
-                dest.write(json.dumps({"path": data_item["path"], "caption": output}) + "\n")
-
     def get_user_prompt(self):
         prompt = ("Count the number of trees in the given image to the best of your ability. Output your count only "
                   "without any further explanation.")
@@ -205,96 +156,54 @@ class NeonTreeEvaluationDataset(VLEODataset):
 
 
 def main():
-    dataset = NeonTreeEvaluationDataset(split="evaluation")
+    dataset = NeonTreeEvaluationDataset(split="evaluation", credential_path="./.secrets/openai.json")
     print(dataset.system_message)
     print(dataset.get_user_prompt())
     dataset.query_gpt4()
 
 
-def evaluation(result_path):
+def evaluation(result_path, ax=None):
+    *model, city = os.path.basename(result_path).removesuffix(".jsonl").split("-")
+    model_name = "-".join(model)
+
     result_json = pd.read_json(result_path, lines=True)
     if "gpt" in os.path.basename(result_path).lower():
         result_json["model_response"] = result_json["response"].apply(lambda x: x["choices"][0]["message"]["content"])
     else:
         result_json["model_response"] = result_json["response"]
     if "count" not in result_json.columns:
-        result_json["objects"] = pd.read_json(os.path.join(os.path.dirname(result_path), "gpt-4v-counting.jsonl"), lines=True)["objects"]
+        result_json["objects"] = pd.read_json(
+            os.path.join(os.path.dirname(result_path), "gpt-4v-counting.jsonl"), lines=True
+        )["objects"]
 
-    def parse_response(x: str):
-        replace_dict = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
-                        "eight": 8, "nine": 9, "ten": 10}
-
-        x = str(x).strip().lower()
-        for old, new in replace_dict.items():
-            x = x.replace(old, str(new))
-
-        try:
-            ret = int(re.search(r'\d+', x).group())
-        except ValueError:
-            ret = -1
-        except AttributeError:
-            ret = -1
-        return ret
-
-    result_json["parsed_response"] = result_json["model_response"].apply(parse_response)
+    result_json["parsed_response"] = result_json["model_response"].apply(parse_digit_response)
     result_json["count"] = result_json["objects"].apply(lambda x: len(x["bbox"]))
     result_json_no_refusal = result_json[result_json["parsed_response"] != -1].copy()
     result_json_refusal = result_json[result_json["parsed_response"] == -1].copy()
 
-    rr = (result_json["parsed_response"] == -1).mean()
-
-    mape = mean_absolute_percentage_error(
-        y_true=result_json["count"],
-        y_pred=result_json["parsed_response"].replace(-1, 0)
-    )
-    mape_no_refusal = mean_absolute_percentage_error(
-        y_true=result_json_no_refusal["count"],
-        y_pred=result_json_no_refusal["parsed_response"]
-    )
-
-    r2 = np.corrcoef(result_json["count"], result_json["parsed_response"].replace(-1, 0))[0, 1] ** 2
-    r2_no_refusal = np.corrcoef(
-        result_json_no_refusal["count"], result_json_no_refusal["parsed_response"].replace(-1, 0)
-    )[0, 1] ** 2
+    rr, (mape, mape_no_refusal), (r2, r2_no_refusal) = calculate_counting_metrics(result_json, result_json_no_refusal)
 
     print(os.path.basename(result_path))
     print(f"MAPE & MAPE (No Refusal) & R2: {r2:.4f} & R2 (No Refusal) & Refusal Rate")
     print(f"{mape:.4f} & {mape_no_refusal:.4f} & {r2:.4f} & {r2_no_refusal:.4f} & {rr:.4f}")
-    print(result_json_refusal)
 
-    import seaborn as sns
+    plot_scatter(result_json_no_refusal, ax=ax)
+    ax.set_title(model_name)
 
-    result_json_no_refusal["Predicted Count"] = result_json_no_refusal["parsed_response"]
-    result_json_no_refusal["True Count"] = result_json_no_refusal["count"]
-    fig, ax = plt.subplots(figsize=(6, 6))
-    sns.scatterplot(
-        data=result_json_no_refusal,
-        x="Predicted Count",
-        y="True Count",
-        color="k",
-        ax=ax,
-    )
-    sns.kdeplot(
-        data=result_json_no_refusal,
-        x="Predicted Count",
-        y="True Count",
-        levels=5,
-        fill=True,
-        alpha=0.6,
-        cut=2,
-        ax=ax,
-    )
-    plt.savefig(result_path.replace(".jsonl", ".pdf"))
-    plt.savefig(result_path.replace(".jsonl", ".png"))
+    # plt.savefig(result_path.replace(".jsonl", ".pdf"))
+    # plt.savefig(result_path.replace(".jsonl", ".png"))
 
 
 if __name__ == "__main__":
+    fig, axes = plt.subplots(ncols=3, nrows=1, figsize=(18, 6))
     files = [
-        "/home/danielz/PycharmProjects/vleo-bench/data/NeonTreeEvaluation/gpt-4v-counting.jsonl",
-        "/home/danielz/PycharmProjects/vleo-bench/data/NeonTreeEvaluation/evaluation-llava-v1.5-13b.jsonl",
-        "/home/danielz/PycharmProjects/vleo-bench/data/NeonTreeEvaluation/evaluation-Qwen-VL-Chat.jsonl",
-        "/home/danielz/PycharmProjects/vleo-bench/data/NeonTreeEvaluation/instructblip-flan-t5-xxl-counting.jsonl",
-        "/home/danielz/PycharmProjects/vleo-bench/data/NeonTreeEvaluation/instructblip-vicuna-13b-counting.jsonl"
+        "./data/NeonTreeEvaluation/gpt-4v-counting.jsonl",
+        "./data/NeonTreeEvaluation/llava-v1.5-13b.jsonl",
+        # "./data/NeonTreeEvaluation/Qwen-VL-Chat.jsonl",
+        "./data/NeonTreeEvaluation/instructblip-flan-t5-xxl-counting.jsonl",
+        # "./data/NeonTreeEvaluation/instructblip-vicuna-13b-counting.jsonl"
     ]
-    for file in files:
-        evaluation(file)
+    for ax, file in zip(axes, files):
+        evaluation(file, ax)
+    plt.tight_layout()
+    plt.savefig("./data/NeonTreeEvaluation/counting-scatter-comparison.pdf")

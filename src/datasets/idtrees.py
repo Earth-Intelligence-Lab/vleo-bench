@@ -10,7 +10,7 @@ from torchgeo.datasets import IDTReeS
 from src.datasets.dataset import VLEODataset
 
 
-class IDTreesDataset(VLEODataset, IDTReeS):
+class IDTreesDataset(IDTReeS):
     train_labels = "./data/IDTReeS/train/Field/train_data.csv"
     train_shps = [
         "./data/IDTReeS/train/ITC/train_MLBS.shp",
@@ -73,7 +73,7 @@ class IDTreesDataset(VLEODataset, IDTReeS):
 
 
 def main():
-    dataset = IDTreesDataset(root="/home/danielz/PycharmProjects/vleo-bench/data/IDTReeS/", split="train")
+    dataset = IDTreesDataset(root="./data/IDTReeS/", split="train")
     hf_dataset = dataset.construct_hf_dataset()
     print(hf_dataset)
     hf_dataset.push_to_hub("danielz01/IDTreeS", split="train")
