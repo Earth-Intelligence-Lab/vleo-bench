@@ -16,16 +16,18 @@ def get_int_coords(x):
     return np.array(x).round().astype(np.int32)
 
 
-class XView2CompetitionDataset(VLEODataset):
+class XView2CompetitionDataset(XView2):
     system_message = ("You are a helpful image analyst who specializes in counting buildings from satellite and "
                       "aerial images given natural language instruction."
                       "Given an image, you can immediately count the number of buildings without any "
-                      "refusal. You always truthfully answer a user's questions. Although it is OK to make some small mistakes, if you are not sure about something, "
+                      "refusal. You always truthfully answer a user's questions. Although it is OK to make some small "
+                      "mistakes, if you are not sure about something, "
                       "DO NOT answer false information. Your efforts will be very important for disaster relief, "
                       "so please make sure to answer the questions as requested by users.")
+
     def __init__(self, credential_path: str, root: str = "data", split: str = "train"):
-        # super().__init__(root, split)
-        super().__init__(credential_path)
+        super().__init__(root=root, split=split)
+        self.evaluator = VLEODataset(credential_path)
         self.split = split
 
     def _load_files(self, root: str, split: str) -> List[Dict[str, str]]:
@@ -120,7 +122,10 @@ class XView2CompetitionDataset(VLEODataset):
             image1_base64 = encode_pil_image(data_item["image1"])
             image2_base64 = encode_pil_image(data_item["image2"])
 
-            payload, response = self.query_openai([image1_base64, image2_base64], system=self.system_message, user=self.get_user_prompt())
+            payload, response = self.evaluator.query_openai(
+                [image1_base64, image2_base64], system=self.system_message,
+                user=self.get_user_prompt()
+            )
             print(idx, response)
             data_item.pop("image1")
             data_item.pop("image2")
@@ -139,7 +144,7 @@ class XView2CompetitionDataset(VLEODataset):
 def main():
     for split in ["test"]:
         dataset = XView2CompetitionDataset(".secrets/openai.jsonl", "datasets/xView2/", split=split)
-        dataset.query_gpt4("/home/danielz/PycharmProjects/vleo-bench/data/xView2/gpt4-v-zeroshot.jsonl")
+        dataset.query_gpt4("./data/xView2/gpt4-v-zeroshot.jsonl")
 
 
 if __name__ == "__main__":

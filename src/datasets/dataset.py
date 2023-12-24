@@ -37,6 +37,8 @@ class VLEODataset(ABC):
     start_time = int(datetime.datetime.utcnow().timestamp())
 
     def __init__(self, credential_path: str):
+        super(VLEODataset, self).__init__()
+
         credentials = []
 
         assert credential_path.endswith(".jsonl")
