@@ -1,5 +1,7 @@
 import os.path
 import xml.etree.ElementTree as ET
+from typing import List
+from termcolor import colored, cprint
 import numpy as np
 from datasets import Dataset, Image
 
@@ -30,7 +32,8 @@ class DIORRSVGDataset(VLEODataset):
                       "You always truthfully answer the user's question. If you are not sure about "
                       "something, don't answer false information.")
 
-    def __init__(self, root: str = "./data", split: str = "test"):
+    def __init__(self, credential_path: str, root: str = "./data", split: str = "test"):
+        super().__init__(credential_path)
         assert split in ["train", "test", "val"]
 
         self.root = root
@@ -91,6 +94,19 @@ class DIORRSVGDataset(VLEODataset):
                   "below in the format of [xmin, ymin, xmax, ymax], where the top-left coordinate is (x_min, "
                   "y_min) and the bottom-right coordinate is (x_max, y_max). You should answer the extent without "
                   f"further explanation.\nDescription: {description}")
+        return prompt
+
+    def get_text_bbox_classification_prompt(self, h: int, w: int, bbox: List[int]):
+        categories_normalized = sorted(self.category_name.values())
+        xmin, ymin, xmax, ymax = bbox
+        prompt = (f"Given a {h} x {w} satellite image and a bounding box of an object in the format of [xmin, ymin, "
+                  f"xmax, ymax], where the top-left coordinate is (x_min, y_min) and the bottom-right coordinate is ("
+                  f"x_max, y_max). Classify the type of the object in the bounding box into one of the following "
+                  f"categories.\nCategories:\n")
+        prompt += ";\n".join([f"{i + 1}. {option}" for i, option in enumerate(categories_normalized)])
+        prompt += f"\nObject Location in Bounding Box: [{xmin}, {ymin}, {xmax}, {ymax}]\n"
+        prompt += "Think step by step and output your final answer in the last line."
+
         return prompt
 
     def get_segmentation_demonstrations(self):
@@ -165,14 +181,14 @@ class DIORRSVGDataset(VLEODataset):
             payload, response = self.query_openai(
                 image_base64,
                 system=self.system_message,
-                user=self.get_detection_prompt(
+                user=self.get_text_bbox_classification_prompt(
                     data_item["image"].height,
                     data_item["image"].width,
-                    data_item["objects"]["captions"][0]
+                    data_item["objects"]["bbox"][0]
                 ),
-                demos=self.get_segmentation_demonstrations() if few_shot else []
+                # demos=self.get_segmentation_demonstrations() if few_shot else []
             )
-            print(idx, response)
+            cprint(f'{idx} {response["choices"][0]["message"]["content"]}', "blue")
             data_item.pop("image")
 
             final_results.append({
@@ -186,8 +202,8 @@ class DIORRSVGDataset(VLEODataset):
 
 
 def main():
-    dataset = DIORRSVGDataset(split="test")
-    dataset.query_gpt4("/home/danielz/PycharmProjects/vleo-bench/data/DIOR-RSVG/gpt-4v-segmentation-twoshot.jsonl", max_queries=100, few_shot=True)
+    dataset = DIORRSVGDataset(credential_path=".secrets/openai_1700801522.jsonl", split="test")
+    dataset.query_gpt4("./data/DIOR-RSVG/gpt-4v-detection-text-bbox.jsonl", max_queries=1000, few_shot=False)
 
 
 if __name__ == "__main__":
