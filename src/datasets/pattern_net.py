@@ -1,7 +1,9 @@
 import os
 from glob import glob
+from typing import Optional
 
 import numpy as np
+import pandas as pd
 from datasets import Dataset, Image
 
 from src.datasets.dataset import VLEODataset
@@ -118,7 +120,7 @@ class PatternNetDataset(VLEODataset):
 
     categories_reassigned = {
         "airplane": "Airplane", "baseball_field": "Baseball Field", "basketball_court": "Basketball Court",
-        "beach": "Beach", "Bridge": "Bridge", "cemetery": "Cemetery", "chaparral": "Chaparral",
+        "beach": "Beach", "bridge": "Bridge", "cemetery": "Cemetery", "chaparral": "Chaparral",
         "christmas_tree_farm": "Christmas Tree Farm", "closed_road": "Closed Road", "coastal_mansion": "Coastal Mansion",
         "crosswalk": "Crosswalk", "dense_residential": "Residential", "ferry_terminal": "Harbor",
         "football_field": "Football Field", "forest": "Forest", "freeway": "Freeway", "golf_course": "Golf Course",
@@ -216,5 +218,90 @@ def main():
     dataset.query_gpt4("./data/PatternNet/gpt-4v-reassigned.jsonl", max_queries=1500)
 
 
+def evaluation(result_path: str):
+    model_name = os.path.basename(result_path).removesuffix(".jsonl")
+    result_dir = os.path.dirname(result_path)
+    print(f"---------------- {model_name} ----------------")
+
+    cm_path = os.path.join(result_dir, f"{model_name}.pdf")
+    csv_path = os.path.join(result_dir, f"{model_name}.csv")
+    refusal_path = os.path.join(result_dir, f"{model_name}-refusal.csv")
+    incorrect_path = os.path.join(result_dir, f"{model_name}-incorrect.csv")
+
+    result_json = pd.read_json(result_path, lines=True)
+
+    if "gpt" in model_name.lower():
+        result_json["model_response"] = result_json["response"].apply(lambda x: x["choices"][0]["message"]["content"])
+    else:
+        result_json["model_response"] = result_json["response"]
+
+    categories_normalized = sorted(set(PatternNetDataset.categories_reassigned.values()))
+
+    def parse_response(response: str):
+        for category in categories_normalized:
+            if category.lower() in response.strip().lower():
+                return category
+        return "Refused"
+
+    refusal_keywords = [
+        "sorry", "difficult"
+    ]
+
+    result_json["label"] = result_json["label"].apply(lambda x: PatternNetDataset.categories_reassigned[x.lower().replace(" ", "_")])
+    result_json["model_answer"] = result_json["model_response"].apply(parse_response)
+    result_json["is_refusal"] = result_json["model_response"].apply(lambda x: any([k in x for k in refusal_keywords]))
+    result_json["is_refusal"] = np.logical_and(result_json["is_refusal"], result_json["model_answer"] != "Refused")
+    result_json["is_correct"] = result_json["model_answer"] == result_json["label"]
+
+    rr = result_json["is_refusal"].mean()
+    acc = result_json["is_correct"].mean()
+
+    from sklearn.metrics import classification_report, ConfusionMatrixDisplay
+    import matplotlib.pyplot as plt
+
+    print(result_json[["model_response", "model_answer", "label"]])
+
+    print(f"RR {rr:.4f} | Accuracy {acc:.4f}")
+    print(classification_report(y_true=result_json["label"], y_pred=result_json["model_answer"]))
+    clf_report = pd.DataFrame(
+        classification_report(y_true=result_json["label"], y_pred=result_json["model_answer"], output_dict=True)
+    ).transpose()
+
+    SMALL_SIZE = 4
+    MEDIUM_SIZE = 5
+    BIGGER_SIZE = 6
+
+    plt.rc('font', size=SMALL_SIZE)  # controls default text sizes
+    plt.rc('axes', titlesize=SMALL_SIZE)  # fontsize of the axes title
+    plt.rc('axes', labelsize=MEDIUM_SIZE)  # fontsize of the x and y labels
+    plt.rc('xtick', labelsize=SMALL_SIZE)  # fontsize of the tick labels
+    plt.rc('ytick', labelsize=SMALL_SIZE)  # fontsize of the tick labels
+    plt.rc('legend', fontsize=SMALL_SIZE)  # legend fontsize
+    plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
+
+    fig, ax = plt.subplots(figsize=(20, 20))
+    ConfusionMatrixDisplay.from_predictions(y_true=result_json["label"], y_pred=result_json["model_answer"], ax=ax).plot()
+    plt.xticks(rotation=90)
+    # plt.tight_layout()
+    plt.savefig(cm_path, bbox_inches='tight', dpi=500)
+    plt.savefig(cm_path.replace(".pdf", ".png"), bbox_inches='tight', dpi=500)
+
+    clf_report = clf_report.round(decimals=2)
+    clf_report.to_csv(os.path.join(result_dir, f"{model_name}-classification.csv"))
+
+    del result_json["response"]
+
+    result_incorrect = result_json[~result_json["is_correct"]]
+    result_refusal = result_json[result_json["is_refusal"]]
+
+    result_json.to_csv(csv_path, index=False)
+    result_incorrect.to_csv(incorrect_path, index=False)
+    result_refusal.to_csv(refusal_path, index=False)
+
+
 if __name__ == "__main__":
-    main()
+    evaluation("./data/PatternNet/gpt-4v-reassigned.jsonl")
+    evaluation("./data/PatternNet/train-instructblip-flan-t5-xxl.jsonl")
+    evaluation("./data/PatternNet/train-instructblip-vicuna-13b.jsonl")
+    evaluation("./data/PatternNet/train-llava-v1.5-13b.jsonl")
+    evaluation("./data/PatternNet/train-Qwen-VL-Chat.jsonl")

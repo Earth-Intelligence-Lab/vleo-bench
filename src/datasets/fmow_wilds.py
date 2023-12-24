@@ -206,8 +206,8 @@ def evaluation(split: Optional[str], model_name: str, result_dir: str):
 
 
 if __name__ == "__main__":
-    evaluation("", "gpt4-v", "/home/danielz/PycharmProjects/vleo-bench/data/fMoW/")
-    evaluation("", "instructblip-flan-t5-xxl", "/home/danielz/PycharmProjects/vleo-bench/data/fMoW/")
-    evaluation("", "instructblip-vicuna-13b", "/home/danielz/PycharmProjects/vleo-bench/data/fMoW/")
-    evaluation("", "qwen-vl-chat", "/home/danielz/PycharmProjects/vleo-bench/data/fMoW/")
-    evaluation("", "llava-v1.5-13b", "/home/danielz/PycharmProjects/vleo-bench/data/fMoW/")
+    evaluation("", "gpt4-v", "./data/fMoW/")
+    evaluation("", "instructblip-flan-t5-xxl", "./data/fMoW/")
+    evaluation("", "instructblip-vicuna-13b", "./data/fMoW/")
+    evaluation("", "qwen-vl-chat", "./data/fMoW/")
+    evaluation("", "llava-v1.5-13b", "./data/fMoW/")

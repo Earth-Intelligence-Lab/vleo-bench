@@ -1,7 +1,7 @@
 import json
 import os
 from glob import glob
-from typing import Union, Dict
+from typing import Union, Dict, List
 
 import numpy as np
 import pandas as pd
@@ -9,10 +9,13 @@ import rasterio
 import torch
 from PIL import Image as PILImage
 from datasets import Dataset, load_dataset
+from matplotlib import pyplot as plt
 from numpy._typing import NDArray
 from rasterio.enums import Resampling
 from skimage import img_as_ubyte
 from skimage.exposure import rescale_intensity
+from sklearn.metrics import ConfusionMatrixDisplay
+from sklearn.preprocessing import MultiLabelBinarizer
 from torch import Tensor
 from tqdm import tqdm
 
@@ -177,7 +180,8 @@ class BigEarthNetDataset(VLEODataset):
     }
     image_size = (120, 120)
 
-    def __init__(self, root: str = "data", split: str = "test", bands: str = "s2-rgb", num_classes: int = 19) -> None:
+    def __init__(self, credential_path: str, root: str = "data", split: str = "test", bands: str = "s2-rgb",
+                 num_classes: int = 19) -> None:
         """Initialize a new BigEarthNet dataset instance.
 
         Args:
@@ -189,6 +193,7 @@ class BigEarthNetDataset(VLEODataset):
         Raises:
             DatasetNotFoundError: If dataset is not found and *download* is False.
         """
+        super().__init__(credential_path)
         assert split in self.splits_metadata
         assert bands in ["s1", "s2", "s2-rgb", "all"]
         assert num_classes in [43, 19]
@@ -338,11 +343,10 @@ class BigEarthNetDataset(VLEODataset):
         return Dataset.from_generator(self._hf_item_generator)
 
     def get_user_prompt(self):
-        prompt = ("You are given a satellite image and a list of land usage types. Choose all the land use types "
-                  "shown up in the image. A list of possible land use types:\n")
+        prompt = ("You are given a satellite image and a list of land cover types. Choose all the land cover types "
+                  "shown up in the image. A list of possible land cover types:\n")
         prompt += ";\n".join([f"{i + 1}. {option}" for i, option in enumerate(self.class_sets[19])])
-        prompt += ("\nOutput the indices of all applicable land use types in a Python list, without any comment or "
-                   "further explanation.")
+        prompt += "\nOutput the all applicable options line by line, without any comment or further explanation."
 
         return prompt
 
@@ -350,7 +354,8 @@ class BigEarthNetDataset(VLEODataset):
         hf_dataset = load_dataset("danielz01/BigEarthNet-S2-v1.0", split="test")
 
         np.random.seed(0)
-        selected_indices = np.random.choice(range(len(hf_dataset)), size=max_queries, replace=False).astype(int).tolist()
+        selected_indices = [x["index"] for x in
+                            resume_from_jsonl("./data/BigEarthNet/gpt4-v.jsonl")]
         final_results = resume_from_jsonl(result_path)
         for idx in selected_indices:
             data_item = hf_dataset[int(idx)]
@@ -360,7 +365,7 @@ class BigEarthNetDataset(VLEODataset):
 
             image_base64 = encode_pil_image(data_item["img"])
             payload, response = self.query_openai(image_base64, system=self.system_message, user=self.get_user_prompt())
-            print(idx, response)
+            print(idx, response["choices"][0]["message"]["content"])
             data_item.pop("img")
             final_results.append({
                 "index": idx,
@@ -372,9 +377,124 @@ class BigEarthNetDataset(VLEODataset):
 
 
 def main():
-    dataset = BigEarthNetDataset(root=".", num_classes=19)
-    print(dataset.get_user_prompt())
+    dataset = BigEarthNetDataset(credential_path=".secrets/openai_1701858440.jsonl", root=".", num_classes=19)
+    dataset.query_gpt4("./data/BigEarthNet/gpt4-v-lines.jsonl")
+
+
+def plot(confusion_matrices, label_names, save_path):
+    fig, axes = plt.subplots(4, 4, figsize=(25, 25))
+    axes = axes.ravel()
+    for i, (ax, cm, label_name) in enumerate(zip(axes, confusion_matrices, label_names)):
+        if label_name == "Land principally occupied by agriculture, with significant areas of natural vegetation":
+            label_name = "Land principally occupied by agriculture,\nwith significant areas of natural vegetation"
+
+        disp = ConfusionMatrixDisplay(confusion_matrices[i], display_labels=["Negative", "Positive"])
+        disp.plot(ax=axes[i], values_format='.4g')
+
+        disp.ax_.set_title(label_name)
+        if i < 12:
+            disp.ax_.set_xlabel('')
+        if i % 4 != 0:
+            disp.ax_.set_ylabel('')
+        disp.im_.colorbar.remove()
+
+    plt.tight_layout()
+    # plt.subplots_adjust(wspace=0.10, hspace=0.1)
+    fig.colorbar(disp.im_, ax=axes)
+    plt.savefig(save_path)
+    plt.savefig(save_path.replace(".pdf", ".png"))
+
+
+def evaluation(result_path: str):
+    model_name = os.path.basename(result_path).removesuffix(".jsonl")
+    result_dir = os.path.dirname(result_path)
+    print(f"---------------- {model_name} ----------------")
+
+    cm_path = os.path.join(result_dir, f"{model_name}.pdf")
+    csv_path = os.path.join(result_dir, f"{model_name}.csv")
+    refusal_path = os.path.join(result_dir, f"{model_name}-refusal.csv")
+
+    result_json = pd.read_json(result_path, lines=True)
+
+    if "gpt" in model_name.lower():
+        result_json["model_response"] = result_json["response"].apply(lambda x: x["choices"][0]["message"]["content"])
+    else:
+        result_json["model_response"] = result_json["response"]
+
+    class2idx = {c: i for i, c in enumerate(BigEarthNetDataset.class_sets[43])}
+
+    # Map 43 to 19 class labels
+    def label_reassign(labels: List[str]):
+        class_indices = [class2idx[label] for label in labels]
+        indices_optional = [BigEarthNetDataset.label_converter.get(idx) for idx in class_indices]
+        indices = [idx for idx in indices_optional if idx is not None]
+        labels_reassigned = [BigEarthNetDataset.class_sets[19][x] for x in indices]
+
+        return labels_reassigned
+
+    # 43 to 19
+    # label_converter = {x: BigEarthNetDataset.class_sets[19][BigEarthNetDataset.label_converter.get(i, x)] for i, x in
+    #                    enumerate(BigEarthNetDataset.class_sets[43])}
+
+    def parse_response(response: str):
+        parsed_answers = []
+        for category in sorted(BigEarthNetDataset.class_sets[19]):
+            if category.lower() in response.strip().lower():
+                parsed_answers.append(category)
+        return parsed_answers if parsed_answers else ["Refused"]
+
+    refusal_keywords = [
+        "sorry", "difficult"
+    ]
+
+    result_json["labels"] = result_json["labels"].apply(label_reassign)
+    result_json["model_answer"] = result_json["model_response"].apply(parse_response)
+    result_json["is_refusal"] = result_json["model_response"].apply(lambda x: any([k in x for k in refusal_keywords]))
+    result_json["is_refusal"] = np.logical_and(result_json["is_refusal"], result_json["model_answer"] != "Refused")
+    # result_json["is_correct"] = result_json["model_answer"] == result_json["label"]
+
+    rr = result_json["is_refusal"].mean()
+    # acc = result_json["is_correct"].mean()
+
+    from sklearn.metrics import classification_report, multilabel_confusion_matrix
+    import matplotlib.pyplot as plt
+
+    # print(result_json[["model_response", "model_answer", "labels"]])
+
+    label_transformer = MultiLabelBinarizer()
+    label_transformer.fit(y=result_json["labels"])
+
+    y_pred = label_transformer.transform(result_json["model_answer"])
+    y_true = label_transformer.transform(result_json["labels"])
+
+    print(f"RR {rr:.4f}")
+    print(classification_report(y_true=y_true, y_pred=y_pred, target_names=label_transformer.classes_))
+    clf_report = pd.DataFrame(
+        classification_report(y_true=y_true, y_pred=y_pred, output_dict=True, target_names=label_transformer.classes_)
+    ).transpose()
+
+    plot(
+        multilabel_confusion_matrix(y_true=y_true, y_pred=y_pred),
+        label_transformer.classes_,
+        cm_path
+    )
+
+    clf_report = clf_report.round(decimals=2)
+    clf_report.to_csv(os.path.join(result_dir, f"{model_name}-classification.csv"))
+
+    del result_json["response"]
+
+    # result_incorrect = result_json[~result_json["is_correct"]]
+    result_refusal = result_json[result_json["is_refusal"]]
+
+    result_json.to_csv(csv_path, index=False)
+    # result_incorrect.to_csv(incorrect_path, index=False)
+    result_refusal.to_csv(refusal_path, index=False)
 
 
 if __name__ == "__main__":
-    main()
+    evaluation("./data/BigEarthNet/gpt4-v-lines.jsonl")
+    evaluation("./data/BigEarthNet/test-instructblip-flan-t5-xxl.jsonl")
+    evaluation("./data/BigEarthNet/test-instructblip-vicuna-13b.jsonl")
+    evaluation("./data/BigEarthNet/test-llava-v1.5-13b.jsonl")
+    evaluation("./data/BigEarthNet/test-Qwen-VL-Chat.jsonl")
