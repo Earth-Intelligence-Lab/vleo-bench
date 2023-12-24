@@ -12,11 +12,7 @@ from tenacity import retry, wait_random_exponential, stop_after_attempt
 from sklearn.metrics import classification_report
 
 from src.datasets.dataset import VLEODataset
-
-
-def encode_image(image_path):
-    with open(image_path, "rb") as image_file:
-        return base64.b64encode(image_file.read()).decode('utf-8')
+from src.utils.gpt4v_chat import encode_image
 
 
 class RSICDDataset(VLEODataset):
@@ -62,109 +58,64 @@ class RSICDDataset(VLEODataset):
         result_dataset = Dataset.from_pandas(pd.DataFrame(hf_dicts)).cast_column("image", Image())
         return result_dataset
 
+    def convert_clipscore_captions(self):
+        hf_dataset = self.convert_hf_dataset("val")
+        clipscore_reference = {
+            os.path.basename(path).removesuffix(".jpg"): captions for path, captions in
+            zip(hf_dataset["path"], hf_dataset["captions"])
+        }
+
+        with open("./data/RSICD/reference_captions.json", "w") as dest:
+            json.dump(clipscore_reference, dest, indent=4)
+
+        return clipscore_reference
+
     def get_multiple_choice_prompts(self) -> str:
         prompt = "Which of the following choices best describes the given image? You should select only one choice. "
         for i, land_cover_type in enumerate(self.land_cover_types):
             prompt += f"{i}. {land_cover_type} "
-        prompt += "In a new line, generate a caption for the image in one sentence."
 
         return prompt
 
-    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
-    def query_openai(self, base64_image: str):
-        from openai import OpenAI
+    def get_captioning_prompts(self) -> str:
+        prompt = ("Generate a caption for the image in one sentence. Make sure to follow the following instructions:\n"
+                  "1. Describe all the important parts of the remote sensing image.\n2. Do not start the sentences "
+                  "with “There is” when there are more than one object in an image.\n3. Do not use the vague concept "
+                  "of words like large, tall, many, in the absence of contrast.\n4. Do not use direction nouns, "
+                  "such as north, south, east and west.\n5. The sentences should contain at least six words.")
 
-        client = OpenAI(organization="org-mJsdbmssTKFvmXiepg7eb1nX")
-
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
-            # "OpenAI-Organization": "org-mJsdbmssTKFvmXiepg7eb1nX"
-            # "OpenAI-Organization": "org-nAKVOfoTWrtlg0B9M5UaIkHV",
-            "OpenAI-Organization": "org-VxKw6HqJ2zOiRv5AIMnVPoNJ"
-        }
-
-        payload = {
-            "model": "gpt-4-vision-preview",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "You are a helpful image analyst that specializes in satellite and aerial images. "
-                                    "You always truthfully answer the user's question. If you are not sure about "
-                                    "something, don't answer false information."
-                        }
-                    ]
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": self.get_multiple_choice_prompts()
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}",
-                                "detail": "high"
-                            }
-                        }
-                    ]
-                }
-            ],
-            "max_tokens": 300,
-            "temperature": 0.2
-        }
-
-        response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-        if not response.ok:
-            raise IOError(str(response.json()))
-
-        return payload, response.json()
+        return prompt
 
     def parse_openai(self):
-        src = "/home/danielz/PycharmProjects/vleo-bench/data/RSICD/gpt-4v.jsonl"
+        src = "./data/RSICD/gpt-4v-captioning.jsonl"
         df = pd.read_json(src, lines=True)
-        df["response"] = df["response"].apply(lambda x: x["choices"][0]["message"]["content"].split("\n\n"))
+        df["caption"] = df["response"].apply(lambda x: x["choices"][0]["message"]["content"])
 
-        df["classification"] = df["response"].apply(lambda x: x[0].split(". ", maxsplit=2)[1])
-        df["caption"] = df["response"].apply(lambda x: x[1])
+        # df["classification"] = df["response"].apply(lambda x: x[0].split(". ", maxsplit=2)[1])
+        # df["caption"] = df["response"].apply(lambda x: x[1])
         # del df["response"]
 
-        df["label"] = df["img"].replace(self.img2landcover)
+        # df["label"] = df["img"].replace(self.img2landcover)
 
-        print(classification_report(y_pred=df["classification"], y_true=df["label"]))
+        # print(classification_report(y_pred=df["classification"], y_true=df["label"]))
 
-        df.to_csv("/home/danielz/PycharmProjects/vleo-bench/data/RSICD/gpt-4v.csv", index=False)
+        df.to_csv("./data/RSICD/gpt-4v.csv", index=False)
+
+        clipscore_captions = {
+            x.removesuffix(".jpg"): y for x, y in zip(df["img"], df["caption"])
+        }
+
+        with open("./data/RSICD/gpt-4v-captioning.json", "w") as dest:
+            json.dump(clipscore_captions, dest, indent=4)
 
     def parse_qwen(self):
-        src = "/home/danielz/PycharmProjects/vleo-bench/data/RSICD/qwen_rsicd_classification.jsonl"
-        df = pd.read_json(src, lines=True)
-        df_caption = pd.read_json("/home/danielz/PycharmProjects/vleo-bench/data/RSICD/qwen_rsicd_captions.jsonl", lines=True)
+        df_caption = pd.read_json("./data/RSICD/qwen_rsicd_captions.jsonl", lines=True)
+        clipscore_captions = {
+            x.removesuffix(".jpg"): y for x, y in zip(df_caption["img"], df_caption["response"])
+        }
 
-        def parse_response(x):
-            if any([keyword in x for keyword in ["The image", "appears", "is", "Therefore", "Can you", "The given image"]]):
-                return "-1"
-            try:
-                return x.replace(": ", ". ").split(". ", maxsplit=2)[-1].rstrip(".")
-            except IndexError:
-                return "-1"
-
-        # print(df["response"].str.split(". "))
-        df["classification"] = df["response"].apply(parse_response)
-        print(df["response"].apply(lambda x: x.replace(": ", ". ").split(". ", maxsplit=2)))
-        # del df["response"]
-
-        df["label"] = df["img"].replace(self.img2landcover)
-        df["caption"] = df_caption["response"]
-        df["ref_captions"] = [json.dumps(x) for x in self.convert_hf_dataset("val")["captions"]]
-
-        print(classification_report(y_pred=df["classification"], y_true=df["label"]))
-
-        df.to_csv("/home/danielz/PycharmProjects/vleo-bench/data/RSICD/qwen_rsicd.csv", index=False)
+        with open("./data/RSICD/qwen-captioning.json", "w") as dest:
+            json.dump(clipscore_captions, dest, indent=4)
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
     def query_hf(self, img_path: str):
@@ -183,11 +134,16 @@ class RSICDDataset(VLEODataset):
 
 def main():
     dataset = RSICDDataset()
-    print(dataset.get_multiple_choice_prompts())
+    dataset.parse_qwen()
+    dataset.parse_openai()
+    dataset.convert_clipscore_captions()
+
+    print(dataset.get_captioning_prompts())
     print(dataset.land_cover_types)
     hf_dataset = dataset.convert_hf_dataset("val")
+    print(len(hf_dataset))
 
-    result_path = "/home/danielz/PycharmProjects/vleo-bench/data/RSICD/kosmos-2.jsonl"
+    result_path = "./data/RSICD/gpt-4v-captioning.jsonl"
     if os.path.exists(result_path):
         final_results = []
         with open(result_path) as f:
@@ -204,13 +160,15 @@ def main():
             print(f"Skipping {data_item['path']}")
             type_count[land_cover_type] += 1
             continue
-        if type_count[land_cover_type] > 6:
+        if type_count[land_cover_type] > 100:
             continue
 
         fpath = os.path.join(dataset.data_dir, dataset.image_dir, data_item["path"])
         assert os.path.exists(fpath)
-        query_payload, query_result = dataset.query_hf(fpath)
-        print(data_item["path"], query_result)  # query_result["choices"][0]["message"]["content"])
+        query_payload, query_result = dataset.query_openai(
+            encode_image(fpath), system=dataset.system_message, user=dataset.get_captioning_prompts()
+        )
+        print(data_item["path"], query_result["choices"][0]["message"]["content"])
 
         if query_result:
             final_results.append({"img": data_item["path"], "response": query_result})
@@ -226,9 +184,9 @@ def main():
 
 def validate():
     dataset = RSICDDataset()
-    print(dataset.get_multiple_choice_prompts())
+    print(dataset.get_captioning_prompts())
     dataset.parse_qwen()
 
 
 if __name__ == "__main__":
-    validate()
+    main()
