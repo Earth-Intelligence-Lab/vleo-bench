@@ -326,8 +326,8 @@ def main():
 
 
 if __name__ == "__main__":
-    evaluation("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/gpt-4v.jsonl")
-    evaluation("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/instructblip-flan-t5-xxl.jsonl")
-    evaluation("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/instructblip-vicuna-13b.jsonl")
-    evaluation("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/llava-v1.5.jsonl")
-    evaluation("/home/danielz/PycharmProjects/vleo-bench/data/Landmarks/qwen-vl.jsonl")
+    evaluation("./data/Landmarks/gpt-4v.jsonl")
+    evaluation("./data/Landmarks/instructblip-flan-t5-xxl.jsonl")
+    evaluation("./data/Landmarks/instructblip-vicuna-13b.jsonl")
+    evaluation("./data/Landmarks/llava-v1.5.jsonl")
+    evaluation("./data/Landmarks/qwen-vl.jsonl")

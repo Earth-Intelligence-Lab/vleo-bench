@@ -40,4 +40,4 @@ def visualize_bounding_boxes(image_path, bounding_boxes, annotations):
 
 
 if __name__ == "__main__":
-    visualize_bounding_boxes('/home/danielz/PycharmProjects/vleo-bench/data/DIOR-RSVG/JPEGImages/05093.jpg', [[ 549, 289, 584, 304 ]], ['vehicle'])
+    visualize_bounding_boxes('./data/DIOR-RSVG/JPEGImages/05093.jpg', [[ 549, 289, 584, 304 ]], ['vehicle'])

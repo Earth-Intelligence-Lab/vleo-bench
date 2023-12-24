@@ -151,7 +151,7 @@ def main():
 
 if __name__ == '__main__':
     convert_xmls_to_cocojson(
-        glob("/home/danielz/PycharmProjects/vleo-bench/data/NeonTreeEvaluation/annotations/*.xml"),
+        glob("./data/NeonTreeEvaluation/annotations/*.xml"),
         {"Tree": 0},
-        "/home/danielz/PycharmProjects/vleo-bench/data/NeonTreeEvaluation/meta.json",
+        "./data/NeonTreeEvaluation/meta.json",
     )
