@@ -1,9 +1,11 @@
+import json
 import os
 
 import pandas as pd
 from datasets import Dataset, Image
 
 from src.datasets.dataset import VLEODataset
+from src.utils.counting import parse_digit_response, calculate_counting_metrics, plot_scatter
 from src.utils.gpt4v_chat import resume_from_jsonl, dump_to_jsonl, encode_image
 
 
@@ -20,7 +22,8 @@ class AerialAnimalPopulation4TuDataset(VLEODataset):
                       "your excellent counting skill is very important to the conservation of wildlife "
                       "animals.")
 
-    def __init__(self, root: str = "./data", split: str = "test"):
+    def __init__(self, credential_path: str, root: str = "./data", split: str = "test"):
+        super().__init__(credential_path)
         assert split in self.splits
 
         self.root = root
@@ -96,5 +99,52 @@ def main():
     dataset.query_gpt4()
 
 
+def evaluation(result_path, ax=None):
+    result_json = pd.read_json(result_path, lines=True)
+    if "gpt" in result_path:
+        result_json["response"] = result_json["response"].apply(lambda x: x["choices"][0]["message"]["content"])
+    else:
+        result_json["response"] = result_json["response"]
+    if "objects" not in result_json:
+        result_json["objects"] = pd.read_json(
+            os.path.join(os.path.dirname(result_path), f"gpt-4v-counting.jsonl"), lines=True
+        )["objects"]
+
+    result_json["model_response"] = result_json["response"].apply(
+        lambda x: x.replace("json\n", "").replace("```", "").replace("\n", "")
+    )
+
+    def parse_response(x):
+        try:
+            ret = json.loads(x)
+        except json.decoder.JSONDecodeError:
+            ret = ""
+        return ret
+    result_json["parsed_response"] = result_json["model_response"].apply(parse_response).apply(
+        lambda x: sum(x.values()) if isinstance(x, dict) else 0
+    )
+
+    result_json["count"] = result_json["objects"].apply(lambda x: len(x["bbox"]))
+    result_json_no_refusal = result_json[result_json["parsed_response"] != ""].copy()
+    print(result_json_no_refusal)
+
+    rr, (mape, mape_no_refusal), (r2, r2_no_refusal) = calculate_counting_metrics(result_json, result_json_no_refusal)
+
+    print(f"MAPE & MAPE (No Refusal) & R2 & R2 (No Refusal) & Refusal Rate")
+    print(f"{mape:.3f} & {mape_no_refusal:.3f} & {r2:.3f} & {r2_no_refusal:.3f} & {rr:.3f}")
+
+    *model, _ = os.path.basename(result_path).removesuffix(".jsonl").split("-")
+    model_name = "-".join(model)
+    plot_scatter(result_json_no_refusal, ax=ax)
+    if ax:
+        ax.set_title(model_name)
+
+
 if __name__ == "__main__":
-    main()
+    for file in [
+        "./data/aerial-animal-population-4tu/gpt-4v-counting.jsonl",
+        "./data/aerial-animal-population-4tu/Qwen-VL-Chat-counting.jsonl",
+        "./data/aerial-animal-population-4tu/llava-v1.5-13b-counting.jsonl",
+    ]:
+        evaluation(file)
+
