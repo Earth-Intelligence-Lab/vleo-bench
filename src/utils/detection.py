@@ -1,6 +1,8 @@
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 from PIL import Image
+import json
+import re
 
 
 def visualize_bounding_boxes(image_path, bounding_boxes, annotations):
@@ -35,8 +37,15 @@ def visualize_bounding_boxes(image_path, bounding_boxes, annotations):
 
     plt.show()
 
-# Example usage:
-# visualize_bounding_boxes('path_to_image.jpg', [[100, 100, 200, 200]], ['Object'])
+
+def extract_bbox(text):
+    # Find all matches
+    matches = re.findall(r'\[\s*(?:\d+(?:\.\d+)?\s*(?:,\s*)?)+\]', text)
+
+    # Extract the full matched strings (first group in each match)
+    extracted_lists = [json.loads(match) for match in matches]
+
+    return extracted_lists
 
 
 if __name__ == "__main__":
