@@ -4,11 +4,13 @@ from glob import glob
 from typing import Dict, List
 
 import numpy as np
+import pandas as pd
 from datasets import Dataset, Image, load_dataset
 from torchgeo.datasets import XView2
 from shapely.wkt import loads as loads_wkt
 from shapely.geometry import mapping, Polygon
 from src.datasets.dataset import VLEODataset
+from src.utils.detection import extract_bbox
 from src.utils.gpt4v_chat import resume_from_jsonl, encode_pil_image, dump_to_jsonl
 
 
@@ -145,6 +147,19 @@ def main():
     for split in ["test"]:
         dataset = XView2CompetitionDataset(".secrets/openai.jsonl", "datasets/xView2/", split=split)
         dataset.query_gpt4("./data/xView2/gpt4-v-zeroshot.jsonl")
+
+
+def evaluation(result_path: str):
+    *model, split = os.path.basename(result_path).removesuffix(".jsonl").split("-")
+    model_name = "-".join(model)
+
+    result_json = pd.read_json(result_path, lines=True)
+    if "gpt" in model_name.lower():
+        result_json["model_response"] = result_json["response"].apply(lambda x: x["choices"][0]["message"]["content"])
+    else:
+        result_json["model_response"] = result_json["response"]
+
+    result_json["model_answer"] = result_json["model_response"].apply(extract_bbox)
 
 
 if __name__ == "__main__":
