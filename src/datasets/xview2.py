@@ -1,16 +1,18 @@
 import json
 import os
+import re
 from glob import glob
 from typing import Dict, List
 
 import numpy as np
 import pandas as pd
 from datasets import Dataset, Image, load_dataset
+from matplotlib import pyplot as plt
 from torchgeo.datasets import XView2
 from shapely.wkt import loads as loads_wkt
 from shapely.geometry import mapping, Polygon
 from src.datasets.dataset import VLEODataset
-from src.utils.detection import extract_bbox
+from src.utils.counting import calculate_counting_metrics, plot_scatter
 from src.utils.gpt4v_chat import resume_from_jsonl, encode_pil_image, dump_to_jsonl
 
 
@@ -152,15 +154,76 @@ def main():
 def evaluation(result_path: str):
     *model, split = os.path.basename(result_path).removesuffix(".jsonl").split("-")
     model_name = "-".join(model)
+    print(model_name)
 
     result_json = pd.read_json(result_path, lines=True)
     if "gpt" in model_name.lower():
         result_json["model_response"] = result_json["response"].apply(lambda x: x["choices"][0]["message"]["content"])
     else:
         result_json["model_response"] = result_json["response"]
+        gpt_results = pd.read_json(os.path.join(os.path.dirname(result_path), "gpt4-v-test.jsonl"), lines=True)
+        result_json["objects2"] = gpt_results["objects2"]
 
-    result_json["model_answer"] = result_json["model_response"].apply(extract_bbox)
+    refusal_keywords = [
+        "sorry", "difficult", "cannot",
+    ]
+
+    def capture_and_parse_json(json_string):
+        json_part = re.search(r'{.*}', json_string, re.DOTALL)
+        if json_part:
+            json_string = json_part.group()
+            try:
+                parsed_dict = json.loads(json_string)
+                return_dict = {}
+                for k, v in parsed_dict.items():
+                    if "before" in k.lower():
+                        return_dict["count_before"] = int(v)
+                    if "no" in k.lower():
+                        return_dict["no_damage"] = int(v)
+                    if "minor" in k.lower():
+                        return_dict["minor_damage"] = int(v)
+                    if "major" in k.lower():
+                        return_dict["major_damage"] = int(v)
+                    if "destroyed" in k.lower():
+                        return_dict["destroyed"] = int(v)
+            except json.JSONDecodeError as e:
+                return -1
+            except TypeError as e:
+                return -1
+            except ValueError as e:
+                return -1
+        else:
+            return -1
+
+        return return_dict
+
+    def parse_gt(objects):
+        count_dict = pd.Series(objects["subtype"], dtype=str).value_counts()
+        return {
+            "count_before": count_dict.sum(),
+            "no_damage": count_dict.get("no-damage", 0),
+            "minor_damage": count_dict.get("minor-damage", 0),
+            "major_damage": count_dict.get("major-damage", 0),
+            "destroyed": count_dict.get("destroyed", 0),
+        }
+
+    result_json["model_answer"] = result_json["model_response"].apply(capture_and_parse_json)
+    result_json["gt"] = result_json["objects2"].apply(parse_gt)
+
+    for key in ["no_damage", "minor_damage", "major_damage", "destroyed"]:
+        result_tmp = result_json.copy()
+        result_tmp["parsed_response"] = result_tmp["model_answer"].apply(lambda x: x.get(key, 0) if isinstance(x, dict) else -1)
+        result_tmp["count"] = result_tmp["gt"].apply(lambda x: x[key])
+
+        result_tmp_no_refusal = result_tmp[result_tmp["parsed_response"] != -1].copy()
+
+        rr, (mape, mape_no_refusal), (r2, r2_no_refusal) = calculate_counting_metrics(result_tmp,
+                                                                                      result_tmp_no_refusal)
+
+        print(key)
+        print(f"MAPE & MAPE (No Refusal) & R2 & R2 (No Refusal) & Refusal Rate")
+        print(f"{mape:.3f} & {mape_no_refusal:.3f} & {r2:.3f} & {r2_no_refusal:.3f} & {rr:.3f}")
 
 
 if __name__ == "__main__":
-    main()
+    evaluation("data/xView2/llava-v1.5-13b-test.jsonl")
