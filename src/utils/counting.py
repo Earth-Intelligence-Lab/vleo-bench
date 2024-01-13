@@ -2,7 +2,7 @@ import re
 
 import numpy as np
 from matplotlib import pyplot as plt
-from sklearn.metrics import mean_absolute_percentage_error
+from sklearn.metrics import mean_absolute_percentage_error, mean_absolute_error
 
 
 def parse_digit_response(x: str):
@@ -33,13 +33,21 @@ def calculate_counting_metrics(result_json, result_json_no_refusal):
         y_true=result_json_no_refusal["count"],
         y_pred=result_json_no_refusal["parsed_response"]
     )
+    mae = mean_absolute_error(
+        y_true=result_json["count"],
+        y_pred=result_json["parsed_response"].replace(-1, 0)
+    )
+    mae_no_refusal = mean_absolute_error(
+        y_true=result_json_no_refusal["count"],
+        y_pred=result_json_no_refusal["parsed_response"]
+    )
 
     r2 = np.corrcoef(result_json["count"], result_json["parsed_response"].replace(-1, 0))[0, 1] ** 2
     r2_no_refusal = np.corrcoef(
         result_json_no_refusal["count"], result_json_no_refusal["parsed_response"].replace(-1, 0)
     )[0, 1] ** 2
 
-    return rr, (mape, mape_no_refusal), (r2, r2_no_refusal)
+    return rr, (mape, mape_no_refusal), (mae, mae_no_refusal), (r2, r2_no_refusal)
 
 
 def plot_scatter(df, ax=None):

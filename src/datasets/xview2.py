@@ -210,20 +210,28 @@ def evaluation(result_path: str):
     result_json["model_answer"] = result_json["model_response"].apply(capture_and_parse_json)
     result_json["gt"] = result_json["objects2"].apply(parse_gt)
 
-    for key in ["no_damage", "minor_damage", "major_damage", "destroyed"]:
+    for key in ["count_before", "no_damage", "minor_damage", "major_damage", "destroyed"]:
         result_tmp = result_json.copy()
-        result_tmp["parsed_response"] = result_tmp["model_answer"].apply(lambda x: x.get(key, 0) if isinstance(x, dict) else -1)
+        result_tmp["parsed_response"] = result_tmp["model_answer"].apply(
+            lambda x: x.get(key, 0) if isinstance(x, dict) else -1
+        )
         result_tmp["count"] = result_tmp["gt"].apply(lambda x: x[key])
 
         result_tmp_no_refusal = result_tmp[result_tmp["parsed_response"] != -1].copy()
 
-        rr, (mape, mape_no_refusal), (r2, r2_no_refusal) = calculate_counting_metrics(result_tmp,
-                                                                                      result_tmp_no_refusal)
+        rr, (mape, mape_no_refusal), (mae, mae_no_refusal), (r2, r2_no_refusal) = calculate_counting_metrics(
+            result_tmp,
+            result_tmp_no_refusal
+        )
 
         print(key)
-        print(f"MAPE & MAPE (No Refusal) & R2 & R2 (No Refusal) & Refusal Rate")
-        print(f"{mape:.3f} & {mape_no_refusal:.3f} & {r2:.3f} & {r2_no_refusal:.3f} & {rr:.3f}")
+        print(f"MAE & MAE (No Refusal) & MAPE & MAPE (No Refusal) & R2 & R2 (No Refusal) & Refusal Rate")
+        print(f"{mae:.3f} & {mae_no_refusal:.3f} & {mape:.3f} & {mape_no_refusal:.3f} & {r2:.3f} & "
+              f"{r2_no_refusal:.3f} & {rr:.3f}")
+
+        plot_scatter(result_tmp_no_refusal)
+        plt.show()
 
 
 if __name__ == "__main__":
-    evaluation("data/xView2/llava-v1.5-13b-test.jsonl")
+    evaluation("data/xView2/gpt4-v-test.jsonl")
