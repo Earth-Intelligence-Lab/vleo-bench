@@ -1,11 +1,15 @@
 import os.path
 import xml.etree.ElementTree as ET
 from typing import List
+
+import pandas as pd
 from termcolor import colored, cprint
 import numpy as np
 from datasets import Dataset, Image
-
+import torch
+from torchvision.ops import box_iou
 from src.datasets.dataset import VLEODataset
+from src.utils.detection import extract_bbox, get_mean_centroid_distance, extract_qwen_bbox
 from src.utils.gpt4v_chat import resume_from_jsonl, encode_image, dump_to_jsonl
 
 
@@ -206,5 +210,43 @@ def main():
     dataset.query_gpt4("./data/DIOR-RSVG/gpt-4v-detection-text-bbox.jsonl", max_queries=1000, few_shot=False)
 
 
+def evaluation(result_path: str):
+    *model, split = os.path.basename(result_path).removesuffix(".jsonl").split("-")
+    model_name = "-".join(model)
+    print(model_name)
+
+    result_json = pd.read_json(result_path, lines=True)
+    if "gpt" in model_name.lower():
+        result_json["model_response"] = result_json["response"].apply(lambda x: x["choices"][0]["message"]["content"])
+    else:
+        result_json["model_response"] = result_json["response"]
+        gpt_results = pd.read_json(os.path.join(os.path.dirname(result_path), "gpt-4v-segmentation-zeroshot.jsonl"), lines=True)
+        result_json["object"] = gpt_results["object"]
+
+    if "qwen" in model_name.lower():
+        result_json["model_answer"] = result_json["model_response"].apply(extract_qwen_bbox)
+    else:
+        result_json["model_answer"] = result_json["model_response"].apply(extract_bbox)
+    result_json["gt"] = result_json["object"].apply(lambda x: x["bbox"])
+
+    result_json["is_refusal"] = result_json["model_answer"].apply(lambda x: len(x) == 0)
+    rr = result_json["is_refusal"].mean()
+    print(rr)
+
+    result_json_no_refusal = result_json[~result_json["is_refusal"]].copy()
+    result_json_no_refusal["model_answer"] = result_json_no_refusal["model_answer"].apply(
+        lambda x: np.array(x).reshape(-1)
+    )
+    predicted_bbox = np.stack(result_json_no_refusal["model_answer"].to_list())
+    gt_bbox = np.stack(result_json_no_refusal["gt"].to_list())
+    ious = torch.diag(box_iou(torch.from_numpy(predicted_bbox), torch.from_numpy(gt_bbox)))
+
+    mean_iou = ious.mean().item()
+    pr_05 = torch.mean((ious > 0.5).float()).item()
+    mean_dist = get_mean_centroid_distance(predicted_bbox, gt_bbox)
+
+    print(mean_iou, pr_05, mean_dist, rr)
+
+
 if __name__ == "__main__":
-    main()
+    evaluation("./data/DIOR-RSVG/Qwen-VL-Chat-test-det.jsonl")
