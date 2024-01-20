@@ -126,9 +126,12 @@ def evaluation(result_path, ax=None):
 
     result_json["count"] = result_json["objects"].apply(lambda x: len(x["bbox"]))
     result_json_no_refusal = result_json[result_json["parsed_response"] != ""].copy()
-    print(result_json_no_refusal)
 
-    rr, (mape, mape_no_refusal), (r2, r2_no_refusal) = calculate_counting_metrics(result_json, result_json_no_refusal)
+    _, (mape, mape_no_refusal), (mae, mae_no_refusal), (r2, r2_no_refusal) = calculate_counting_metrics(
+        result_json, result_json_no_refusal
+    )
+
+    rr = 1 - len(result_json_no_refusal) / len(result_json)
 
     print(f"MAPE & MAPE (No Refusal) & R2 & R2 (No Refusal) & Refusal Rate")
     print(f"{mape:.3f} & {mape_no_refusal:.3f} & {r2:.3f} & {r2_no_refusal:.3f} & {rr:.3f}")
