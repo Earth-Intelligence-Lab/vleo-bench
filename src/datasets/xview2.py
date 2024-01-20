@@ -6,6 +6,7 @@ from typing import Dict, List
 
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from datasets import Dataset, Image, load_dataset
 from matplotlib import pyplot as plt
 from torchgeo.datasets import XView2
@@ -210,7 +211,10 @@ def evaluation(result_path: str):
     result_json["model_answer"] = result_json["model_response"].apply(capture_and_parse_json)
     result_json["gt"] = result_json["objects2"].apply(parse_gt)
 
-    for key in ["count_before", "no_damage", "minor_damage", "major_damage", "destroyed"]:
+    sns.set(font_scale=2)
+    fig, axes = plt.subplots(ncols=3, nrows=2, figsize=(18, 12))
+
+    for i, key in enumerate(["count_before", "no_damage", "minor_damage", "major_damage", "destroyed"]):
         result_tmp = result_json.copy()
         result_tmp["parsed_response"] = result_tmp["model_answer"].apply(
             lambda x: x.get(key, 0) if isinstance(x, dict) else -1
@@ -229,8 +233,11 @@ def evaluation(result_path: str):
         print(f"{mae:.3f} & {mae_no_refusal:.3f} & {mape:.3f} & {mape_no_refusal:.3f} & {r2:.3f} & "
               f"{r2_no_refusal:.3f} & {rr:.3f}")
 
-        plot_scatter(result_tmp_no_refusal)
-        plt.show()
+        plot_scatter(result_tmp_no_refusal, axes[i // 3, i % 3])
+        axes[i // 3, i % 3].set_title(key, fontsize="x-large")
+    axes.flat[-1].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(result_path.replace(".jsonl", ".pdf"))
 
 
 if __name__ == "__main__":
