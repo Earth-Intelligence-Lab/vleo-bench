@@ -1,5 +1,6 @@
 import os.path
 import xml.etree.ElementTree as ET
+from functools import partial
 from typing import List
 
 import pandas as pd
@@ -224,7 +225,8 @@ def evaluation(result_path: str):
         result_json["object"] = gpt_results["object"]
 
     if "qwen" in model_name.lower():
-        result_json["model_answer"] = result_json["model_response"].apply(extract_qwen_bbox)
+        extract_qwen_bbox_ = partial(extract_qwen_bbox, h=800, w=800)
+        result_json["model_answer"] = result_json["model_response"].apply(extract_qwen_bbox_)
     else:
         result_json["model_answer"] = result_json["model_response"].apply(extract_bbox)
     result_json["gt"] = result_json["object"].apply(lambda x: x["bbox"])
