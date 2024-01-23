@@ -152,7 +152,7 @@ def main():
         dataset.query_gpt4("./data/xView2/gpt4-v-zeroshot.jsonl")
 
 
-def evaluation(result_path: str):
+def evaluation(result_path: str, ax=None):
     *model, split = os.path.basename(result_path).removesuffix(".jsonl").split("-")
     model_name = "-".join(model)
     print(model_name)
@@ -210,6 +210,20 @@ def evaluation(result_path: str):
 
     result_json["model_answer"] = result_json["model_response"].apply(capture_and_parse_json)
     result_json["gt"] = result_json["objects2"].apply(parse_gt)
+
+    if ax:
+        result_tmp = result_json.copy()
+        result_tmp["parsed_response"] = result_tmp["model_answer"].apply(
+            lambda x: x.get("count_before", 0) if isinstance(x, dict) else -1
+        )
+        result_tmp["count"] = result_tmp["gt"].apply(lambda x: x["count_before"])
+
+        result_tmp_no_refusal = result_tmp[result_tmp["parsed_response"] != -1].copy()
+
+        plot_scatter(result_tmp_no_refusal, ax=ax)
+        ax.set_title(model_name)
+
+        return
 
     sns.set(font_scale=2)
     fig, axes = plt.subplots(ncols=3, nrows=2, figsize=(18, 12))
