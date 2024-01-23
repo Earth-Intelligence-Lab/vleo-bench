@@ -181,29 +181,31 @@ def evaluation(result_path, ax=None):
     result_json_no_refusal = result_json[result_json["parsed_response"] != -1].copy()
     result_json_refusal = result_json[result_json["parsed_response"] == -1].copy()
 
-    rr, (mape, mape_no_refusal), (r2, r2_no_refusal) = calculate_counting_metrics(result_json, result_json_no_refusal)
+    rr, (mape, mape_no_refusal), (mae, mae_no_refusal), (r2, r2_no_refusal) = calculate_counting_metrics(result_json, result_json_no_refusal)
 
     print(os.path.basename(result_path))
-    print(f"MAPE & MAPE (No Refusal) & R2: {r2:.4f} & R2 (No Refusal) & Refusal Rate")
-    print(f"{mape:.4f} & {mape_no_refusal:.4f} & {r2:.4f} & {r2_no_refusal:.4f} & {rr:.4f}")
+    print(f"MAE & MAE (No Refusal) & MAPE & MAPE (No Refusal) & R2: {r2:.4f} & R2 (No Refusal) & Refusal Rate")
+    print(f"{mae:.4f} & {mae_no_refusal:.4f} & {mape:.4f} & {mape_no_refusal:.4f} & {r2:.4f} & {r2_no_refusal:.4f} & "
+          f"{rr:.4f}")
+
+    print(f"MAE (No Refusal) & MAPE (No Refusal) & R2 (No Refusal) & Refusal Rate")
+    print(f"{mae_no_refusal:.3f} & {mape_no_refusal:.3f} & {r2_no_refusal:.3f} & {rr:.2f}")
 
     plot_scatter(result_json_no_refusal, ax=ax)
-    ax.set_title(model_name)
+    if ax:
+        ax.set_title(model_name)
 
-    # plt.savefig(result_path.replace(".jsonl", ".pdf"))
-    # plt.savefig(result_path.replace(".jsonl", ".png"))
+    plt.savefig(result_path.replace(".jsonl", ".pdf"))
+    plt.savefig(result_path.replace(".jsonl", ".png"))
 
 
 if __name__ == "__main__":
-    fig, axes = plt.subplots(ncols=3, nrows=1, figsize=(18, 6))
     files = [
         "./data/NeonTreeEvaluation/gpt-4v-counting.jsonl",
-        "./data/NeonTreeEvaluation/llava-v1.5-13b.jsonl",
-        # "./data/NeonTreeEvaluation/Qwen-VL-Chat.jsonl",
+        "./data/NeonTreeEvaluation/Qwen-VL-Chat-counting.jsonl",
         "./data/NeonTreeEvaluation/instructblip-flan-t5-xxl-counting.jsonl",
-        # "./data/NeonTreeEvaluation/instructblip-vicuna-13b-counting.jsonl"
+        "./data/NeonTreeEvaluation/instructblip-vicuna-13b-counting.jsonl",
+        "./data/NeonTreeEvaluation/llava-v1.5-13b-counting.jsonl",
     ]
-    for ax, file in zip(axes, files):
-        evaluation(file, ax)
-    plt.tight_layout()
-    plt.savefig("./data/NeonTreeEvaluation/counting-scatter-comparison.pdf")
+    for file in files:
+        evaluation(file)

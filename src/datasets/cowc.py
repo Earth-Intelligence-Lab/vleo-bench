@@ -158,16 +158,20 @@ def evaluation(result_path, ax=None):
     result_json_no_refusal["Predicted Count"] = result_json_no_refusal["parsed_response"]
     result_json_no_refusal["True Count"] = result_json_no_refusal["count"]
 
-    rr, (mape, mape_no_refusal), (r2, r2_no_refusal) = calculate_counting_metrics(result_json, result_json_no_refusal)
+    rr, (mape, mape_no_refusal), (mae, mae_no_refusal), (r2, r2_no_refusal) = calculate_counting_metrics(result_json, result_json_no_refusal)
 
-    print(f"MAPE & MAPE (No Refusal) & R2 & R2 (No Refusal) & Refusal Rate")
-    print(f"{mape:.3f} & {mape_no_refusal:.3f} & {r2:.3f} & {r2_no_refusal:.3f} & {rr:.3f}")
+    # print(f"MAPE & MAPE (No Refusal) & R2 & R2 (No Refusal) & Refusal Rate")
+    # print(f"{mape:.3f} & {mape_no_refusal:.3f} & {r2:.3f} & {r2_no_refusal:.3f} & {rr:.3f}")
+
+    print(f"MAE (No Refusal) & MAPE (No Refusal) & R2 (No Refusal) & Refusal Rate")
+    print(f"{mae_no_refusal:.3f} & {mape_no_refusal:.3f} & {r2_no_refusal:.3f} & {rr:.2f}")
 
     plot_scatter(result_json_no_refusal, ax=ax)
-    ax.set_title(model_name)
+    if ax:
+        ax.set_title(model_name)
 
-    # plt.savefig(result_path.replace(".jsonl", ".pdf"))
-    # plt.savefig(result_path.replace(".jsonl", ".png"))
+    plt.savefig(result_path.replace(".jsonl", ".pdf"))
+    plt.savefig(result_path.replace(".jsonl", ".png"))
 
 
 def combine_cities():
@@ -191,6 +195,6 @@ def combine_cities():
 if __name__ == "__main__":
     from glob import glob
 
-    combine_cities()
+    # combine_cities()
     for result_file in sorted(glob("./data/cowc-m/*-combined.jsonl")):
         evaluation(result_file)

@@ -121,11 +121,15 @@ def evaluation(result_path, ax=None):
             ret = ""
         return ret
     result_json["parsed_response"] = result_json["model_response"].apply(parse_response).apply(
-        lambda x: sum(x.values()) if isinstance(x, dict) else 0
+        lambda x: sum(x.values()) if isinstance(x, dict) else -1
     )
 
     result_json["count"] = result_json["objects"].apply(lambda x: len(x["bbox"]))
-    result_json_no_refusal = result_json[result_json["parsed_response"] != ""].copy()
+    result_json_no_refusal = result_json[result_json["parsed_response"] != -1].copy()
+
+    if len(result_json_no_refusal) == 0:
+        print(f"All refused for {result_path}, nothing to calculate")
+        return
 
     _, (mape, mape_no_refusal), (mae, mae_no_refusal), (r2, r2_no_refusal) = calculate_counting_metrics(
         result_json, result_json_no_refusal
@@ -133,8 +137,11 @@ def evaluation(result_path, ax=None):
 
     rr = 1 - len(result_json_no_refusal) / len(result_json)
 
-    print(f"MAPE & MAPE (No Refusal) & R2 & R2 (No Refusal) & Refusal Rate")
-    print(f"{mape:.3f} & {mape_no_refusal:.3f} & {r2:.3f} & {r2_no_refusal:.3f} & {rr:.3f}")
+    # print(f"MAPE & MAPE (No Refusal) & R2 & R2 (No Refusal) & Refusal Rate")
+    # print(f"{mape:.3f} & {mape_no_refusal:.3f} & {r2:.3f} & {r2_no_refusal:.3f} & {rr:.3f}")
+
+    print(f"MAE (No Refusal) & MAPE (No Refusal) & R2 (No Refusal) & Refusal Rate")
+    print(f"{mae_no_refusal:.3f} & {mape_no_refusal:.3f} & {r2_no_refusal:.3f} & {rr:.2f}")
 
     *model, _ = os.path.basename(result_path).removesuffix(".jsonl").split("-")
     model_name = "-".join(model)
@@ -147,6 +154,8 @@ if __name__ == "__main__":
     for file in [
         "./data/aerial-animal-population-4tu/gpt-4v-counting.jsonl",
         "./data/aerial-animal-population-4tu/Qwen-VL-Chat-counting.jsonl",
+        "./data/aerial-animal-population-4tu/instructblip-flan-t5-xxl-counting.jsonl",
+        "./data/aerial-animal-population-4tu/instructblip-vicuna-13b-counting.jsonl",
         "./data/aerial-animal-population-4tu/llava-v1.5-13b-counting.jsonl",
     ]:
         evaluation(file)
