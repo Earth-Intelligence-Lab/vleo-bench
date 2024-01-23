@@ -256,7 +256,7 @@ def evaluation(result_path):
     print(category_counts)
     print((correct_results["category"].value_counts() / result_json["category"].value_counts()).loc[category_counts.index] * 100)
 
-    export_columns = ["index", "name", "model_response"]
+    export_columns = ["index", "name", "category", "model_response"]
     result_json.to_csv(f"./data/Landmarks/{model_name}.csv", index=False)
     correct_results[export_columns].to_csv(f"./data/Landmarks/{model_name}-correct.csv", index=False)
     incorrect_results[export_columns].to_csv(f"./data/Landmarks/{model_name}-incorrect.csv", index=False)
